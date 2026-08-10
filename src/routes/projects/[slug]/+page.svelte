@@ -2,12 +2,13 @@
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { ArrowLeft, CalendarDays, Pencil, Plus, Sparkles, Trash2, User, X } from '@lucide/svelte';
+	import { ArrowLeft, CalendarDays, FileDown, Pencil, Plus, RefreshCw, Sparkles, Trash2, User, X } from '@lucide/svelte';
 	import Avatar from '$lib/components/Avatar.svelte';
 	import Badge from '$lib/components/Badge.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import ProgressBar from '$lib/components/ProgressBar.svelte';
 	import { generateAiDraft, suggestSpecialties } from '$lib/ai';
+	import { exportDraftPdf, exportProjectPdf } from '$lib/pdf';
 	import { projectAccents, priorityStyles, projectStatusStyles, taskStatusStyles } from '$lib/badges';
 	import {
 		canTransition,
@@ -37,7 +38,7 @@
 		type Task,
 		type TaskStatus
 	} from '$lib/types';
-	import { daysFromNow, dueLabel, formatDate, isOverdue } from '$lib/utils';
+	import { daysFromNow, dueLabel, formatDate, formatEstimate, isOverdue, relativeTime } from '$lib/utils';
 
 	const project = $derived(projects.find((p) => p.slug === page.params.slug));
 	const projectMembers = $derived(
@@ -46,11 +47,22 @@
 			: []
 	);
 
-	const columns: TaskStatus[] = ['backlog', 'todo', 'in_progress', 'in_review', 'done'];
+	const columns: TaskStatus[] = ['todo', 'in_progress', 'done'];
+
+	// Backlog folds under "To do", and in-review under "In progress", so the
+	// board stays a focused 3-column kanban without hiding any tasks.
+	const columnStatuses: Partial<Record<TaskStatus, TaskStatus[]>> = {
+		todo: ['todo', 'backlog'],
+		in_progress: ['in_progress', 'in_review'],
+		done: ['done']
+	};
 
 	function tasksInColumn(status: TaskStatus) {
 		if (!project) return [];
-		return tasks.filter((task) => task.projectId === project.id && task.status === status);
+		const included = columnStatuses[status] ?? [status];
+		return tasks.filter(
+			(task) => task.projectId === project.id && included.includes(task.status)
+		);
 	}
 
 	const openCount = $derived(
@@ -70,20 +82,103 @@
 		return canTransition(task.status, status);
 	}
 
-	function handleDrop(status: TaskStatus) {
-		if (draggingId) {
-			const task = tasks.find((t) => t.id === draggingId);
-			if (task && !canTransition(task.status, status)) {
-				dropError = `Cannot move "${task.title}" from ${taskStatusStyles[task.status].label} directly to ${taskStatusStyles[status].label}. Allowed next steps: ${taskTransitions[task.status]
-					.map((s) => taskStatusStyles[s].label)
-					.join(', ')}.`;
-			} else {
-				dropError = '';
-				moveTask(draggingId, status);
+	type DragState = {
+		taskId: string;
+		from: TaskStatus;
+		x: number;
+		y: number;
+		offsetX: number;
+		offsetY: number;
+		width: number;
+	};
+
+	type PendingDrag = {
+		taskId: string;
+		from: TaskStatus;
+		startX: number;
+		startY: number;
+		offsetX: number;
+		offsetY: number;
+		width: number;
+	};
+
+	let drag = $state<DragState | null>(null);
+	let pendingDrag = $state<PendingDrag | null>(null);
+	let suppressClick = $state(false);
+
+	function startDrag(event: PointerEvent, task: Task, from: TaskStatus) {
+		if (event.button !== 0) return;
+		const card = event.currentTarget as HTMLElement;
+		const rect = card.getBoundingClientRect();
+		pendingDrag = {
+			taskId: task.id,
+			from,
+			startX: event.clientX,
+			startY: event.clientY,
+			offsetX: event.clientX - rect.left,
+			offsetY: event.clientY - rect.top,
+			width: rect.width
+		};
+		window.addEventListener('pointermove', onDragMove);
+		window.addEventListener('pointerup', onDragEnd);
+		window.addEventListener('pointercancel', onDragEnd);
+	}
+
+	function onDragMove(event: PointerEvent) {
+		if (pendingDrag) {
+			const moved = Math.hypot(
+				event.clientX - pendingDrag.startX,
+				event.clientY - pendingDrag.startY
+			);
+			if (moved < 6) return;
+			draggingId = pendingDrag.taskId;
+			drag = {
+				taskId: pendingDrag.taskId,
+				from: pendingDrag.from,
+				x: event.clientX,
+				y: event.clientY,
+				offsetX: pendingDrag.offsetX,
+				offsetY: pendingDrag.offsetY,
+				width: pendingDrag.width
+			};
+			pendingDrag = null;
+		}
+		if (!drag) return;
+		drag.x = event.clientX;
+		drag.y = event.clientY;
+		const el = document.elementFromPoint(event.clientX, event.clientY);
+		const column = el?.closest('[data-status]') as HTMLElement | null;
+		overStatus = column ? (column.dataset.status as TaskStatus) : null;
+	}
+
+	function onDragEnd() {
+		if (drag) {
+			const { taskId, from } = drag;
+			if (overStatus) {
+				const task = tasks.find((t) => t.id === taskId);
+				const target =
+					task && task.status !== overStatus && canTransition(task.status, overStatus)
+						? overStatus
+						: null;
+				if (target) {
+					dropError = '';
+					moveTask(taskId, target);
+				} else if (overStatus !== from && task && !canTransition(task.status, overStatus)) {
+					dropError = `Cannot move "${task.title}" from ${taskStatusStyles[task.status].label} directly to ${taskStatusStyles[overStatus].label}. Allowed next steps: ${taskTransitions[task.status]
+						.map((s) => taskStatusStyles[s].label)
+						.join(', ')}.`;
+				}
 			}
+			suppressClick = true;
+			setTimeout(() => (suppressClick = false), 0);
 		}
 		draggingId = null;
 		overStatus = null;
+		drag = null;
+		pendingDrag = null;
+		window.removeEventListener('pointermove', onDragMove);
+		window.removeEventListener('pointerup', onDragEnd);
+		window.removeEventListener('pointercancel', onDragEnd);
 	}
 
 	let addingStatus = $state<TaskStatus | null>(null);
@@ -107,7 +202,77 @@
 	let editAssigneeId = $state('');
 	let editDue = $state('');
 	let editTags = $state('');
+	let editDescription = $state('');
+	let editEstimate = $state('');
 	let editError = $state('');
+
+	let expandedTaskId = $state<string | null>(null);
+
+	function toggleTaskExpand(taskId: string) {
+		expandedTaskId = expandedTaskId === taskId ? null : taskId;
+	}
+
+	let exporting = $state(false);
+	let exportError = $state('');
+
+	async function handleExportProject() {
+		if (!project || exporting) return;
+		exporting = true;
+		exportError = '';
+		try {
+			await exportProjectPdf({
+				projectName: project.name,
+				projectStatus: projectStatusStyles[project.status].label,
+				projectDue: project.due,
+				description: project.description,
+				spec: project.spec,
+				userStories: project.userStories,
+				tasks: tasks
+					.filter((t) => t.projectId === project.id)
+					.map((t) => ({
+						title: t.title,
+						description: t.description,
+						priority: t.priority,
+						estimate: t.estimate,
+						due: t.due,
+						assignee: memberById(t.assigneeId)?.name ?? '',
+						status: t.status
+					}))
+			});
+		} catch (err) {
+			exportError = err instanceof Error ? err.message : String(err);
+		} finally {
+			exporting = false;
+		}
+	}
+
+	async function handleExportDraft() {
+		if (!project || !aiDraft || exporting) return;
+		exporting = true;
+		exportError = '';
+		try {
+			const due = aiDue ? new Date(`${aiDue}T12:00:00`).toISOString() : project.due;
+			await exportDraftPdf({
+				projectName: project.name,
+				projectDue: due,
+				desires: aiDesires,
+				spec: aiDraft.spec,
+				userStories: aiDraft.userStories,
+				tasks: aiDraft.tasks.map((t) => ({
+					title: t.title,
+					description: t.description,
+					priority: t.priority,
+					estimate: t.estimateHours,
+					due,
+					assignee: t.assignee ?? ''
+				}))
+			});
+		} catch (err) {
+			exportError = err instanceof Error ? err.message : String(err);
+		} finally {
+			exporting = false;
+		}
+	}
 
 	let aiOpen = $state(false);
 	let aiDesires = $state('');
@@ -122,6 +287,31 @@
 	let aiDraft = $state<AiDraft | null>(null);
 	let aiPublished = $state(false);
 	let aiNeedsKey = $state(false);
+	let aiStatusMessage = $state('');
+	let newStory = $state('');
+
+	const aiStatusMessages = [
+		'Understanding your request…',
+		'Planning the spec…',
+		'Writing user stories…',
+		'Breaking down tasks…'
+	];
+
+	const selectedAiMembers = $derived(members.filter((m) => aiIncluded[m.id]));
+	const draftTotalEstimate = $derived(
+		aiDraft ? aiDraft.tasks.reduce((sum, t) => sum + (t.estimateHours ?? 0), 0) : 0
+	);
+
+	$effect(() => {
+		if (!aiLoading) return;
+		let i = 0;
+		aiStatusMessage = aiStatusMessages[0];
+		const timer = setInterval(() => {
+			i = (i + 1) % aiStatusMessages.length;
+			aiStatusMessage = aiStatusMessages[i];
+		}, 2200);
+		return () => clearInterval(timer);
+	});
 
 	function openAiPanel() {
 		if (!project) return;
@@ -131,8 +321,8 @@
 		aiError = '';
 		aiNeedsKey = !settings.aiApiKey;
 		aiDue = project.due.slice(0, 10);
-		aiIncluded = Object.fromEntries(projectMembers.map((m) => [m.id, true]));
-		aiSpecialty = Object.fromEntries(projectMembers.map((m) => [m.id, '']));
+		aiIncluded = Object.fromEntries(members.map((m) => [m.id, true]));
+		aiSpecialty = Object.fromEntries(members.map((m) => [m.id, '']));
 		if (!aiNeedsKey) suggestSpecialtiesNow();
 	}
 
@@ -161,7 +351,7 @@
 		}
 	}
 
-	async function handleAiGenerate() {
+	async function handleAiGenerate(refine = false) {
 		if (!project) return;
 		if (!settings.aiApiKey) {
 			aiNeedsKey = true;
@@ -175,16 +365,19 @@
 		aiError = '';
 		aiPublished = false;
 		try {
-			const selected = projectMembers.filter((m) => aiIncluded[m.id]);
 			const draft = await generateAiDraft({
 				projectName: project.name,
 				projectDescription: project.description,
 				desires: aiDesires.trim(),
 				dueDate: aiDue ? new Date(`${aiDue}T12:00:00`).toISOString() : project.due,
-				members: selected.map((m) => ({ name: m.name, specialty: aiSpecialty[m.id] ?? '' })),
+				members: selectedAiMembers.map((m) => ({
+					name: m.name,
+					specialty: aiSpecialty[m.id] ?? ''
+				})),
 				existingTitles: tasks.filter((t) => t.projectId === project.id).map((t) => t.title),
 				apiKey: settings.aiApiKey,
-				model: settings.aiModel
+				model: settings.aiModel,
+				currentDraft: refine && aiDraft ? aiDraft : undefined
 			});
 			if (draft.tasks.length === 0 && !draft.spec && draft.userStories.length === 0) {
 				aiError = 'The AI returned an empty plan. Try rephrasing your desires.';
@@ -198,13 +391,19 @@
 		}
 	}
 
+	function addStory() {
+		if (!aiDraft || !newStory.trim()) return;
+		aiDraft.userStories.push(newStory.trim());
+		newStory = '';
+	}
+
 	async function handleAiPublish() {
 		if (!project || !aiDraft) return;
 		aiPublishing = true;
 		aiError = '';
 		try {
 			const assignments: Record<string, string | null> = {};
-			for (const m of projectMembers) {
+			for (const m of members) {
 				if (aiIncluded[m.id]) assignments[m.name] = m.id;
 			}
 			const due = aiDue ? new Date(`${aiDue}T12:00:00`).toISOString() : project.due;
@@ -259,6 +458,8 @@
 		editAssigneeId = task.assigneeId ?? '';
 		editDue = task.due.slice(0, 10);
 		editTags = task.tags.join(', ');
+		editDescription = task.description;
+		editEstimate = task.estimate ? String(task.estimate) : '';
 		editError = '';
 	}
 
@@ -271,12 +472,15 @@
 		if (!editTask || !project || !editTitle.trim()) return;
 		editError = '';
 		try {
+			const estimate = parseFloat(editEstimate);
 			await updateTask(editTask.id, {
 				title: editTitle.trim(),
+				description: editDescription.trim(),
 				projectId: project.id,
 				status: editStatus,
 				priority: editPriority,
 				assigneeId: editAssigneeId || null,
+				estimate: Number.isFinite(estimate) && estimate > 0 ? estimate : null,
 				due: editDue ? new Date(`${editDue}T12:00:00`).toISOString() : daysFromNow(7),
 				tags: editTags
 					.split(',')
@@ -369,6 +573,15 @@
 				>
 					<Sparkles size={15} />
 					Generate with AI
+				</button>
+				<button
+					type="button"
+					class="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-surface px-3 py-2 text-sm font-medium text-neutral-600 transition-colors hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
+					onclick={handleExportProject}
+					disabled={exporting}
+				>
+					<FileDown size={15} />
+					{exporting ? 'Exporting…' : 'Export PDF'}
 				</button>
 				<span
 					class="inline-flex items-center gap-1.5 rounded-lg bg-neutral-100 px-3 py-1.5 text-sm font-medium text-neutral-600"
@@ -586,6 +799,32 @@
 						bind:value={editTags}
 					/>
 				</div>
+				<div class="lg:col-span-3">
+					<label for="edit-description" class="mb-1 block text-xs font-medium text-neutral-600">
+						Description
+					</label>
+					<textarea
+						id="edit-description"
+						rows={2}
+						placeholder="What does this task involve, and how do we verify it?"
+						class="w-full rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
+						bind:value={editDescription}
+					></textarea>
+				</div>
+				<div>
+					<label for="edit-estimate" class="mb-1 block text-xs font-medium text-neutral-600">
+						Estimate (hours)
+					</label>
+					<input
+						id="edit-estimate"
+						type="number"
+						min="0"
+						step="0.5"
+						placeholder="e.g. 4"
+						class="w-full rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
+						bind:value={editEstimate}
+					/>
+				</div>
 			</div>
 			{#if editError}
 				<p class="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{editError}</p>
@@ -679,7 +918,7 @@
 									: 'Suggest specialties from description'}
 						</button>
 					</div>
-					{#if projectMembers.length === 0}
+					{#if members.length === 0}
 						<p
 							class="rounded-lg border border-dashed border-neutral-300 bg-surface/60 px-3 py-2.5 text-sm text-neutral-500"
 						>
@@ -688,7 +927,7 @@
 						</p>
 					{:else}
 						<div class="space-y-1.5">
-							{#each projectMembers as member (member.id)}
+							{#each members as member (member.id)}
 								<div
 									class="flex flex-wrap items-center gap-2 rounded-lg border border-neutral-200 bg-surface px-3 py-2"
 								>
@@ -726,13 +965,22 @@
 					<button
 						type="button"
 						class="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
-						onclick={handleAiGenerate}
+						onclick={() => handleAiGenerate(false)}
 						disabled={aiLoading || aiPublishing}
 					>
 						<Sparkles size={15} />
-						{aiLoading ? 'Generating…' : 'Generate plan'}
+						{aiDraft ? 'Regenerate plan' : 'Generate plan'}
 					</button>
 					{#if aiDraft && aiDraft.tasks.length > 0}
+						<button
+							type="button"
+							class="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-surface px-4 py-2 text-sm font-medium text-indigo-700 transition-colors hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-50"
+							onclick={() => handleAiGenerate(true)}
+							disabled={aiLoading || aiPublishing}
+						>
+							<RefreshCw size={15} />
+							Refine with AI
+						</button>
 						<button
 							type="button"
 							class="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
@@ -742,7 +990,37 @@
 							{aiPublishing ? 'Publishing…' : 'Publish to backlog'}
 						</button>
 					{/if}
+					{#if aiDraft}
+						<button
+							type="button"
+							class="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-surface px-4 py-2 text-sm font-medium text-neutral-600 transition-colors hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
+							onclick={handleExportDraft}
+							disabled={exporting || aiLoading || aiPublishing}
+						>
+							<FileDown size={15} />
+							{exporting ? 'Exporting…' : 'Export PDF'}
+						</button>
+					{/if}
 				</div>
+
+				{#if aiLoading}
+					<div
+						class="mt-4 flex items-center gap-3 rounded-lg border border-indigo-200 bg-indigo-50/60 px-4 py-3"
+					>
+						<span class="flex items-center gap-1">
+							<span class="size-1.5 animate-pulse rounded-full bg-indigo-400"></span>
+							<span
+								class="size-1.5 animate-pulse rounded-full bg-indigo-500"
+								style="animation-delay: 150ms"
+							></span>
+							<span
+								class="size-1.5 animate-pulse rounded-full bg-indigo-600"
+								style="animation-delay: 300ms"
+							></span>
+						</span>
+						<p class="text-sm font-medium text-indigo-700">{aiStatusMessage}</p>
+					</div>
+				{/if}
 			{/if}
 
 			{#if aiError}
@@ -751,69 +1029,165 @@
 
 			{#if aiPublished}
 				<p class="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-					Published — the tasks are now in the Backlog column, and the spec &amp; user stories are
+					Published — the tasks are now on the board, and the spec &amp; user stories are
 					saved below.
 				</p>
 			{/if}
 
 			{#if aiDraft}
 				<div class="mt-5 space-y-4 border-t border-indigo-200/70 pt-4">
-					{#if aiDraft.spec}
-						<div>
-							<h3
-								class="text-xs font-semibold tracking-wider text-neutral-500 uppercase"
+					<div>
+						<h3
+							class="text-xs font-semibold tracking-wider text-neutral-500 uppercase"
+						>
+							Spec
+						</h3>
+						<textarea
+							rows={3}
+							class="mt-1 w-full rounded-lg border-neutral-300 bg-surface text-sm focus:border-indigo-500 focus:ring-indigo-500"
+							bind:value={aiDraft.spec}
+						></textarea>
+					</div>
+					<div>
+						<h3
+							class="text-xs font-semibold tracking-wider text-neutral-500 uppercase"
+						>
+							User stories
+						</h3>
+						<ul class="mt-1 space-y-1.5">
+							{#each aiDraft.userStories as story, i (i)}
+								<li class="flex items-center gap-2">
+									<span class="shrink-0 text-indigo-500">•</span>
+									<input
+										type="text"
+										class="w-full rounded-lg border-neutral-300 bg-surface px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:ring-indigo-500"
+										bind:value={aiDraft.userStories[i]}
+									/>
+									<button
+										type="button"
+										class="shrink-0 rounded-md p-1 text-neutral-400 hover:bg-red-50 hover:text-red-600"
+										aria-label="Remove story"
+										onclick={() => aiDraft!.userStories.splice(i, 1)}
+									>
+										<Trash2 size={14} />
+									</button>
+								</li>
+							{/each}
+						</ul>
+						<div class="mt-2 flex items-center gap-2">
+							<input
+								type="text"
+								placeholder="Add a user story…"
+								class="w-full rounded-lg border-neutral-300 bg-surface px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:ring-indigo-500"
+								bind:value={newStory}
+								onkeydown={(event) => {
+									if (event.key === 'Enter') {
+										event.preventDefault();
+										addStory();
+									}
+								}}
+							/>
+							<button
+								type="button"
+								class="shrink-0 rounded-lg border border-neutral-200 bg-surface px-3 py-1.5 text-sm font-medium text-neutral-600 transition-colors hover:bg-neutral-50"
+								onclick={addStory}
 							>
-								Spec
-							</h3>
-							<p class="mt-1 text-sm whitespace-pre-line text-neutral-700">{aiDraft.spec}</p>
+								Add
+							</button>
 						</div>
-					{/if}
-					{#if aiDraft.userStories.length > 0}
-						<div>
-							<h3
-								class="text-xs font-semibold tracking-wider text-neutral-500 uppercase"
-							>
-								User stories
-							</h3>
-							<ul class="mt-1 space-y-1">
-								{#each aiDraft.userStories as story (story)}
-									<li class="flex gap-1.5 text-sm text-neutral-600">
-										<span class="text-indigo-500">•</span>
-										<span>{story}</span>
-									</li>
-								{/each}
-							</ul>
-						</div>
-					{/if}
+					</div>
 					<div>
 						<h3
 							class="text-xs font-semibold tracking-wider text-neutral-500 uppercase"
 						>
 							Tasks ({aiDraft.tasks.length})
+							{#if draftTotalEstimate > 0}
+								<span class="ml-2 normal-case tracking-normal text-neutral-400">
+									· ~{formatEstimate(draftTotalEstimate)} total
+								</span>
+							{/if}
 						</h3>
-						<ul class="mt-1 divide-y divide-neutral-100">
-							{#each aiDraft.tasks as task (task.title)}
-								<li class="flex items-start gap-2 py-2">
-									<div class="min-w-0 flex-1">
-										<p class="text-sm font-medium text-neutral-800">{task.title}</p>
-										{#if task.description}
-											<p class="mt-0.5 text-xs text-neutral-500">{task.description}</p>
-										{/if}
+						<ul class="mt-1 space-y-2">
+							{#each aiDraft.tasks as task, i (i)}
+								<li class="rounded-lg border border-neutral-200 bg-surface/60 p-2.5">
+									<div class="flex flex-wrap items-center gap-2">
+										<input
+											type="text"
+											class="min-w-40 flex-1 rounded-lg border-neutral-300 bg-surface px-2.5 py-1.5 text-sm font-medium focus:border-indigo-500 focus:ring-indigo-500"
+											bind:value={task.title}
+										/>
+										<select
+											class="rounded-lg border-neutral-300 bg-surface px-2 py-1.5 text-sm focus:border-indigo-500 focus:ring-indigo-500"
+											bind:value={task.priority}
+											aria-label="Priority"
+										>
+											{#each priorities as p (p)}
+												<option value={p}>{priorityStyles[p].label}</option>
+											{/each}
+										</select>
+										<input
+											type="number"
+											min="0"
+											step="0.5"
+											placeholder="hrs"
+											class="w-20 rounded-lg border-neutral-300 bg-surface px-2 py-1.5 text-sm focus:border-indigo-500 focus:ring-indigo-500"
+											bind:value={task.estimateHours}
+											aria-label="Estimate in hours"
+										/>
+										<select
+											class="rounded-lg border-neutral-300 bg-surface px-2 py-1.5 text-sm focus:border-indigo-500 focus:ring-indigo-500"
+											bind:value={task.assignee}
+											aria-label="Assignee"
+										>
+											<option value="">Unassigned</option>
+											{#each selectedAiMembers as m (m.id)}
+												<option value={m.name}>{m.name}</option>
+											{/each}
+										</select>
+										<button
+											type="button"
+											class="shrink-0 rounded-md p-1.5 text-neutral-400 hover:bg-red-50 hover:text-red-600"
+											aria-label="Remove task"
+											onclick={() => aiDraft!.tasks.splice(i, 1)}
+										>
+											<Trash2 size={15} />
+										</button>
 									</div>
-									<Badge variant="priority" value={task.priority} />
-									{#if task.assignee}
-										<span class="shrink-0 text-xs text-neutral-500">{task.assignee}</span>
-									{/if}
+									<input
+										type="text"
+										placeholder="Description"
+										class="mt-1.5 w-full rounded-lg border-neutral-300 bg-surface px-2.5 py-1.5 text-sm text-neutral-500 focus:border-indigo-500 focus:ring-indigo-500"
+										bind:value={task.description}
+									/>
 								</li>
 							{/each}
 						</ul>
 					</div>
+					<p class="text-xs text-neutral-400">
+						Edit anything above, then hit “Refine with AI” to recalibrate the plan, or publish
+						as-is.
+					</p>
 				</div>
 			{/if}
 		</section>
 	{/if}
 
 	<section class="mt-6">
+		{#if exportError}
+			<div
+				class="mb-4 flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700"
+			>
+				<p>{exportError}</p>
+				<button
+					type="button"
+					class="shrink-0 rounded-md p-1 text-red-400 hover:bg-red-100 hover:text-red-700"
+					aria-label="Dismiss"
+					onclick={() => (exportError = '')}
+				>
+					<X size={14} />
+				</button>
+			</div>
+		{/if}
 		{#if dropError}
 			<div class="mb-4 flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
 				<p>{dropError}</p>
@@ -832,23 +1206,13 @@
 				<div
 					role="group"
 					aria-label={taskStatusStyles[status].label}
+					data-status={status}
 					class="w-72 shrink-0 rounded-xl border p-3 transition-colors {overStatus === status &&
 					isValidTarget(status)
 						? 'border-indigo-300 bg-indigo-50/70'
 						: 'border-neutral-200 bg-neutral-50/80'} {draggingId && !isValidTarget(status)
 						? 'opacity-50'
 						: ''}"
-					ondragover={(event) => {
-						event.preventDefault();
-						overStatus = status;
-					}}
-					ondragleave={() => {
-						if (overStatus === status) overStatus = null;
-					}}
-					ondrop={(event) => {
-						event.preventDefault();
-						handleDrop(status);
-					}}
 				>
 					<header class="mb-3 flex items-center gap-2 px-1">
 						<span class="size-2 rounded-full {taskStatusStyles[status].dot}"></span>
@@ -875,16 +1239,28 @@
 					<div class="space-y-2">
 						{#each tasksInColumn(status) as task (task.id)}
 							{@const assignee = memberById(task.assigneeId)}
-							<article
-								draggable="true"
-								ondragstart={() => (draggingId = task.id)}
-								ondragend={() => {
-									draggingId = null;
-									overStatus = null;
+							<div
+								onpointerdown={(event) => startDrag(event, task, status)}
+								onclick={() => {
+									if (suppressClick) {
+										suppressClick = false;
+										return;
+									}
+									toggleTaskExpand(task.id);
 								}}
-								class="group cursor-grab rounded-lg border border-neutral-200 bg-white p-3 shadow-xs transition-shadow hover:shadow-md active:cursor-grabbing {draggingId ===
+								role="button"
+								tabindex="0"
+								onkeydown={(event) => {
+									if (event.key === 'Enter' || event.key === ' ') {
+										event.preventDefault();
+										toggleTaskExpand(task.id);
+									}
+								}}
+								class="group touch-none cursor-grab rounded-lg border bg-white p-3 shadow-xs transition-colors select-none {expandedTaskId ===
 								task.id
-									? 'opacity-50'
+									? 'border-indigo-300'
+									: 'border-neutral-200 hover:border-neutral-300'} {draggingId === task.id
+									? 'opacity-40'
 									: ''}"
 							>
 								<div class="flex items-start gap-2.5">
@@ -899,7 +1275,11 @@
 											type="button"
 											class="rounded-md p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
 											aria-label="Edit {task.title}"
-											onclick={() => startEditTask(task)}
+											onpointerdown={(event) => event.stopPropagation()}
+											onclick={(event) => {
+												event.stopPropagation();
+												startEditTask(task);
+											}}
 										>
 											<Pencil size={13} />
 										</button>
@@ -907,7 +1287,11 @@
 											type="button"
 											class="rounded-md p-1 text-neutral-400 hover:bg-red-50 hover:text-red-600"
 											aria-label="Delete {task.title}"
-											onclick={() => (deleteTaskTarget = task)}
+											onpointerdown={(event) => event.stopPropagation()}
+											onclick={(event) => {
+												event.stopPropagation();
+												deleteTaskTarget = task;
+											}}
 										>
 											<Trash2 size={13} />
 										</button>
@@ -924,6 +1308,49 @@
 										{/each}
 									</div>
 								{/if}
+								{#if expandedTaskId === task.id}
+									<div class="mt-2 space-y-2 border-t border-neutral-100 pt-2">
+										{#if task.description}
+											<p
+												class="text-xs leading-relaxed whitespace-pre-line text-neutral-500"
+											>
+												{task.description}
+											</p>
+										{:else}
+											<p class="text-xs text-neutral-400">
+												No description yet — use the pencil to add one.
+											</p>
+										{/if}
+										<dl class="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+											<div class="flex items-center gap-1">
+												<dt class="text-neutral-400">Priority</dt>
+												<dd class="font-medium text-neutral-700">
+													{priorityStyles[task.priority].label}
+												</dd>
+											</div>
+											<div class="flex items-center gap-1">
+												<dt class="text-neutral-400">Estimate</dt>
+												<dd class="font-medium text-neutral-700">
+													{formatEstimate(task.estimate) || '—'}
+												</dd>
+											</div>
+											<div class="flex items-center gap-1">
+												<dt class="text-neutral-400">Assignee</dt>
+												<dd class="font-medium text-neutral-700">
+													{assignee?.name ?? 'Unassigned'}
+												</dd>
+											</div>
+											{#if task.updatedAt}
+												<div class="flex items-center gap-1">
+													<dt class="text-neutral-400">Updated</dt>
+													<dd class="font-medium text-neutral-700">
+														{relativeTime(task.updatedAt)}
+													</dd>
+												</div>
+											{/if}
+										</dl>
+									</div>
+								{/if}
 								<footer class="mt-3 flex items-center justify-between">
 									{#if assignee}
 										<Avatar member={assignee} size="xs" />
@@ -935,15 +1362,31 @@
 											<User size={11} />
 										</span>
 									{/if}
-									<span
-										class={isOverdue(task.due)
-											? 'text-xs font-medium text-red-600'
-											: 'text-xs text-neutral-400'}
-									>
-										{dueLabel(task.due)}
-									</span>
+									<div class="flex items-center gap-2">
+										{#if task.status !== status}
+											<span
+												class="rounded-md bg-neutral-100 px-1.5 py-0.5 text-[10px] font-medium text-neutral-500"
+											>
+												{taskStatusStyles[task.status].label}
+											</span>
+										{/if}
+										{#if formatEstimate(task.estimate)}
+											<span
+													class="rounded-md bg-indigo-50 px-1.5 py-0.5 text-[11px] font-medium text-indigo-700"
+											>
+												{formatEstimate(task.estimate)}
+											</span>
+										{/if}
+										<span
+											class={isOverdue(task.due)
+												? 'text-xs font-medium text-red-600'
+												: 'text-xs text-neutral-400'}
+										>
+											{dueLabel(task.due)}
+										</span>
+									</div>
 								</footer>
-							</article>
+							</div>
 						{/each}
 					</div>
 
@@ -971,6 +1414,18 @@
 				</div>
 			{/each}
 		</div>
+
+		{#if drag}
+			{@const ghostTask = tasks.find((t) => t.id === drag?.taskId)}
+			{#if ghostTask}
+				<div
+					class="pointer-events-none fixed z-50 rounded-lg border border-indigo-300 bg-surface p-3 shadow-xl"
+					style="left: {drag.x - drag.offsetX}px; top: {drag.y - drag.offsetY}px; width: {drag.width}px;"
+				>
+					<p class="text-sm font-medium text-neutral-800">{ghostTask.title}</p>
+				</div>
+			{/if}
+		{/if}
 	</section>
 
 	{#if project?.spec || (project?.userStories?.length ?? 0) > 0}

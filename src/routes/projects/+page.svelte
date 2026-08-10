@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { CalendarDays, FolderKanban, Pencil, Plus, Search, Trash2, X } from '@lucide/svelte';
 	import Avatar from '$lib/components/Avatar.svelte';
@@ -239,8 +240,17 @@
 
 <div class="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3">
 	{#each filtered as project (project.id)}
-		<article
-			class="group flex flex-col rounded-xl border border-neutral-200 bg-white p-5 shadow-xs transition-colors hover:border-neutral-300"
+		<div
+			role="link"
+			tabindex="0"
+			class="group flex cursor-pointer flex-col rounded-xl border border-neutral-200 bg-white p-5 shadow-xs transition-colors hover:border-neutral-300 focus-visible:outline-2 focus-visible:outline-indigo-500"
+			onclick={() => goto(resolve(`/projects/${project.slug}`))}
+			onkeydown={(event) => {
+				if (event.key === 'Enter' || event.key === ' ') {
+					event.preventDefault();
+					goto(resolve(`/projects/${project.slug}`));
+				}
+			}}
 		>
 			<div class="flex items-start justify-between gap-3">
 				<div class="flex items-center gap-3">
@@ -267,7 +277,10 @@
 						type="button"
 						class="rounded-lg p-1.5 text-neutral-400 opacity-0 transition-opacity hover:bg-neutral-100 hover:text-neutral-700 focus-visible:opacity-100 group-hover:opacity-100"
 						aria-label="Edit {project.name}"
-						onclick={() => openEdit(project)}
+						onclick={(event) => {
+							event.stopPropagation();
+							openEdit(project);
+						}}
 					>
 						<Pencil size={14} />
 					</button>
@@ -275,7 +288,10 @@
 						type="button"
 						class="rounded-lg p-1.5 text-neutral-400 opacity-0 transition-opacity hover:bg-red-50 hover:text-red-600 focus-visible:opacity-100 group-hover:opacity-100"
 						aria-label="Delete {project.name}"
-						onclick={() => (deleteTarget = project)}
+						onclick={(event) => {
+							event.stopPropagation();
+							deleteTarget = project;
+						}}
 					>
 						<Trash2 size={14} />
 					</button>
@@ -309,7 +325,7 @@
 					{formatDate(project.due)}
 				</span>
 			</div>
-		</article>
+		</div>
 	{:else}
 		{#if projects.length === 0}
 			<div

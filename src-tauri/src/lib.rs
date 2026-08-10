@@ -121,10 +121,24 @@ pub fn run() {
             sql: "ALTER TABLE projects ADD COLUMN user_stories TEXT NOT NULL DEFAULT '[]'",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 13,
+            description: "add_tasks_description",
+            sql: "ALTER TABLE tasks ADD COLUMN description TEXT NOT NULL DEFAULT ''",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 14,
+            description: "add_tasks_estimate",
+            sql: "ALTER TABLE tasks ADD COLUMN estimate REAL NOT NULL DEFAULT 0",
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_http::init())
         .plugin(
             tauri_plugin_sql::Builder::default()

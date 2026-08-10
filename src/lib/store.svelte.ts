@@ -40,10 +40,12 @@ type ProjectMemberRow = { project_id: string; member_id: string };
 type TaskRow = {
 	id: string;
 	title: string;
+	description: string;
 	project_id: string;
 	assignee_id: string | null;
 	status: string;
 	priority: string;
+	estimate: number;
 	due: string;
 	tags: string;
 	updated_at: string;
@@ -199,10 +201,12 @@ function taskFromRow(row: TaskRow): Task {
 	return {
 		id: row.id,
 		title: row.title,
+		description: row.description ?? '',
 		projectId: row.project_id,
 		assigneeId: row.assignee_id,
 		status: row.status as TaskStatus,
 		priority: row.priority as Priority,
+		estimate: row.estimate > 0 ? row.estimate : null,
 		due: row.due,
 		tags,
 		updatedAt: row.updated_at
@@ -525,10 +529,12 @@ export async function deleteProject(id: string): Promise<void> {
 
 export async function createTask(input: {
 	title: string;
+	description?: string;
 	projectId: string;
 	status?: TaskStatus;
 	priority?: Priority;
 	assigneeId?: string | null;
+	estimate?: number | null;
 	due?: string;
 	tags?: string[];
 }): Promise<void> {
@@ -539,23 +545,27 @@ export async function createTask(input: {
 	const task: Task = {
 		id: newId(),
 		title: input.title.trim(),
+		description: input.description?.trim() ?? '',
 		projectId: input.projectId,
 		assigneeId: input.assigneeId ?? null,
 		status: input.status ?? 'backlog',
 		priority: input.priority ?? 'medium',
+		estimate: input.estimate ?? null,
 		due: input.due ?? daysFromNow(7),
 		tags: input.tags ?? [],
 		updatedAt: nowIso()
 	};
 	await database.execute(
-		'INSERT INTO tasks (id, title, project_id, assignee_id, status, priority, due, tags, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+		'INSERT INTO tasks (id, title, description, project_id, assignee_id, status, priority, estimate, due, tags, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
 		[
 			task.id,
 			task.title,
+			task.description,
 			task.projectId,
 			task.assigneeId,
 			task.status,
 			task.priority,
+			task.estimate,
 			task.due,
 			JSON.stringify(task.tags),
 			task.updatedAt
@@ -573,10 +583,12 @@ export async function updateTask(
 	id: string,
 	input: {
 		title: string;
+		description?: string;
 		projectId: string;
 		assigneeId: string | null;
 		status: TaskStatus;
 		priority: Priority;
+		estimate?: number | null;
 		due: string;
 		tags: string[];
 	}
@@ -590,6 +602,10 @@ export async function updateTask(
 	const database = requireDb();
 	const changes: AuditEntry['details'] = {};
 	if (task.title !== input.title.trim()) changes.title = { from: task.title, to: input.title.trim() };
+	const nextDescription = input.description?.trim() ?? task.description;
+	if (task.description !== nextDescription) {
+		changes.description = { from: task.description, to: nextDescription };
+	}
 	if (task.projectId !== input.projectId) {
 		changes.project = {
 			from: projectById(task.projectId)?.name ?? task.projectId,
@@ -601,6 +617,10 @@ export async function updateTask(
 	}
 	if (task.status !== input.status) changes.status = { from: task.status, to: input.status };
 	if (task.priority !== input.priority) changes.priority = { from: task.priority, to: input.priority };
+	const nextEstimate = input.estimate ?? task.estimate;
+	if (task.estimate !== nextEstimate) {
+		changes.estimate = { from: task.estimate, to: nextEstimate };
+	}
 	if (task.due !== input.due) changes.due = { from: task.due, to: input.due };
 	const nextTags = input.tags ?? [];
 	if (JSON.stringify(task.tags) !== JSON.stringify(nextTags)) {
@@ -608,13 +628,15 @@ export async function updateTask(
 	}
 	const updatedAt = nowIso();
 	await database.execute(
-		'UPDATE tasks SET title = ?, project_id = ?, assignee_id = ?, status = ?, priority = ?, due = ?, tags = ?, updated_at = ? WHERE id = ?',
+		'UPDATE tasks SET title = ?, description = ?, project_id = ?, assignee_id = ?, status = ?, priority = ?, estimate = ?, due = ?, tags = ?, updated_at = ? WHERE id = ?',
 		[
 			input.title.trim(),
+			nextDescription,
 			input.projectId,
 			input.assigneeId,
 			input.status,
 			input.priority,
+			nextEstimate,
 			input.due,
 			JSON.stringify(nextTags),
 			updatedAt,
@@ -622,10 +644,12 @@ export async function updateTask(
 		]
 	);
 	task.title = input.title.trim();
+	task.description = nextDescription;
 	task.projectId = input.projectId;
 	task.assigneeId = input.assigneeId;
 	task.status = input.status;
 	task.priority = input.priority;
+	task.estimate = nextEstimate;
 	task.due = input.due;
 	task.tags = nextTags;
 	task.updatedAt = updatedAt;
@@ -745,10 +769,12 @@ export async function publishAiDraft(
 		if (!task.title.trim()) continue;
 		await createTask({
 			title: task.title,
+			description: task.description,
 			projectId,
 			status: 'backlog',
 			priority: task.priority,
 			assigneeId: task.assignee ? (assignments[task.assignee] ?? null) : null,
+			estimate: task.estimateHours ?? null,
 			due,
 			tags: task.tags
 		});

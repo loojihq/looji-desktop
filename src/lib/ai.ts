@@ -111,6 +111,7 @@ export async function generateAiDraft(input: {
 	existingTitles: string[];
 	apiKey: string;
 	model: string;
+	currentDraft?: AiDraft;
 }): Promise<AiDraft> {
 	const memberLines =
 		input.members.length > 0
@@ -120,6 +121,46 @@ export async function generateAiDraft(input: {
 			: '- none selected';
 	const existing =
 		input.existingTitles.length > 0 ? input.existingTitles.map((t) => `- ${t}`).join('\n') : '- none';
+	const revising = input.currentDraft !== undefined;
+
+	const schema = `{
+  "spec": "A concise but complete project specification covering scope, approach and acceptance criteria.",
+  "userStories": ["As a <role>, I want <goal>, so that <benefit>."],
+  "tasks": [
+    {
+      "title": "Short imperative task title",
+      "description": "2-4 detailed sentences covering what to do, how to verify it, and any edge cases",
+      "priority": "urgent | high | medium | low",
+      "tags": ["one or two tags"],
+      "estimate_hours": "number of hours, e.g. 1, 2.5, 8",
+      "assignee": "exact member name from the provided list, or null"
+    }
+  ]
+}`;
+
+	const rules = `- Produce as many tasks as needed to cover the work comprehensively (typically 8-20+). Prefer smaller, more granular tasks over large ones — each task should be doable by one person in a day or less.
+- Every task needs a detailed description (what, how to verify, edge cases).
+- Give every task a realistic estimate_hours based on its complexity.
+- Only assign tasks to member names from the provided team list; otherwise null.
+- Use only the allowed priority values.
+- Do not duplicate any existing task titles.`;
+
+	const systemPrompt = revising
+		? `You are a senior product manager and technical lead. The user has manually edited a previously generated plan. Revise it: preserve every manual edit, keep the plan internally consistent, fill gaps, resolve contradictions and improve the backlog where it makes sense. Return the COMPLETE revised plan. You reply only with valid JSON and nothing else.
+
+JSON schema:
+${schema}
+
+Rules:
+- Keep the user's manual changes exactly as given.
+${rules}`
+		: `You are a senior product manager and technical lead. You plan projects into a detailed specification, user stories, and a granular task backlog. You reply only with valid JSON and nothing else.
+
+JSON schema:
+${schema}
+
+Rules:
+${rules}`;
 
 	const content = await chat(
 		input.apiKey,
@@ -127,28 +168,7 @@ export async function generateAiDraft(input: {
 		[
 			{
 				role: 'system',
-				content: `You are a senior product manager and technical lead. You plan projects into a concise specification, user stories, and a granular task backlog. You reply only with valid JSON and nothing else.
-
-JSON schema:
-{
-  "spec": "A short project specification (2-4 sentences).",
-  "userStories": ["As a <role>, I want <goal>, so that <benefit>."],
-  "tasks": [
-    {
-      "title": "Short imperative task title",
-      "description": "1-2 sentence description",
-      "priority": "urgent | high | medium | low",
-      "tags": ["one or two tags"],
-      "assignee": "exact member name from the provided list, or null"
-    }
-  ]
-}
-
-Rules:
-- Produce 5-12 tasks that are concrete, actionable and roughly ordered by dependency.
-- Only assign tasks to member names from the provided team list; otherwise null.
-- Use only the allowed priority values.
-- Do not duplicate any existing task titles.`
+				content: systemPrompt
 			},
 			{
 				role: 'user',
@@ -166,7 +186,13 @@ ${memberLines}
 Existing task titles (do not duplicate):
 ${existing}
 
-Respond with JSON only following the schema.`
+${
+					revising
+						? `Current draft with the user's manual edits (preserve them and improve):\n${JSON.stringify(
+								input.currentDraft
+							)}\n\nReturn the complete revised JSON following the schema.`
+						: 'Respond with JSON only following the schema.'
+				}`
 			}
 		],
 		true
@@ -182,18 +208,25 @@ Respond with JSON only following the schema.`
 		? parsed.tasks
 				.filter((t): t is Record<string, unknown> => typeof t === 'object' && t !== null)
 				.filter((t) => typeof t.title === 'string' && String(t.title).trim())
-				.map((t) => ({
-					title: String(t.title).trim(),
-					description:
-						typeof t.description === 'string' ? t.description.trim() : '',
-					priority: PRIORITIES.includes(t.priority as Priority)
-						? (t.priority as Priority)
-						: 'medium',
-					tags: Array.isArray(t.tags)
-						? t.tags.filter((x): x is string => typeof x === 'string').map((x) => x.trim()).filter(Boolean)
-						: [],
-					assignee: typeof t.assignee === 'string' ? t.assignee : undefined
-				}))
+				.map((t) => {
+					const estimate =
+						typeof t.estimate_hours === 'number' && isFinite(t.estimate_hours) && t.estimate_hours > 0
+							? Math.round(t.estimate_hours * 10) / 10
+							: null;
+					return {
+						title: String(t.title).trim(),
+						description:
+							typeof t.description === 'string' ? t.description.trim() : '',
+						priority: PRIORITIES.includes(t.priority as Priority)
+							? (t.priority as Priority)
+							: 'medium',
+						tags: Array.isArray(t.tags)
+							? t.tags.filter((x): x is string => typeof x === 'string').map((x) => x.trim()).filter(Boolean)
+							: [],
+						assignee: typeof t.assignee === 'string' ? t.assignee : undefined,
+						estimateHours: estimate
+					};
+				})
 		: [];
 
 	return {

@@ -10,6 +10,12 @@
       "identifier": "http:default",
       "allow": [{ "url": "https://api.deepseek.com/*" }]
     },
+    "dialog:default",
+    "fs:default",
+    {
+      "identifier": "fs:allow-write-file",
+      "allow": [{ "path": "**" }]
+    },
     "sql:default",
     "sql:allow-execute"
   ]

@@ -30,10 +30,12 @@ export type Priority = 'urgent' | 'high' | 'medium' | 'low';
 export type Task = {
 	id: string;
 	title: string;
+	description: string;
 	projectId: string;
 	assigneeId: string | null;
 	status: TaskStatus;
 	priority: Priority;
+	estimate: number | null;
 	due: string;
 	tags: string[];
 	updatedAt: string;
@@ -68,6 +70,7 @@ export type AiDraftTask = {
 	priority: Priority;
 	tags: string[];
 	assignee?: string;
+	estimateHours: number | null;
 };
 
 export type AiDraft = {

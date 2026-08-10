@@ -62,3 +62,11 @@ export function dueLabel(iso: string): string {
 	if (diff === 1) return 'Due tomorrow';
 	return `Due ${formatDate(iso)}`;
 }
+
+export function formatEstimate(hours: number | null | undefined): string {
+	if (hours == null || hours <= 0) return '';
+	const rounded = Math.round(hours * 10) / 10;
+	if (rounded >= 8 && rounded % 8 === 0) return `${rounded / 8}d`;
+	if (rounded < 1) return `${Math.round(rounded * 60)}m`;
+	return `${rounded % 1 === 0 ? rounded : rounded.toFixed(1)}h`;
+}
