@@ -223,10 +223,11 @@
 		{/each}
 	</div>
 	<div class="relative ml-auto w-full sm:w-72">
-		<Search
-			size={16}
-			class="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-neutral-400"
-		/>
+		<span
+			class="pointer-events-none absolute inset-y-0 left-3 flex items-center text-neutral-400"
+		>
+			<Search size={16} />
+		</span>
 		<input
 			type="search"
 			placeholder="Search projects"
@@ -239,7 +240,7 @@
 <div class="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3">
 	{#each filtered as project (project.id)}
 		<article
-			class="group flex flex-col rounded-xl border border-neutral-200 bg-white p-5 shadow-xs transition-all hover:-translate-y-0.5 hover:border-neutral-300 hover:shadow-md"
+			class="group flex flex-col rounded-xl border border-neutral-200 bg-white p-5 shadow-xs transition-colors hover:border-neutral-300"
 		>
 			<div class="flex items-start justify-between gap-3">
 				<div class="flex items-center gap-3">

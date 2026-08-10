@@ -255,10 +255,11 @@
 	{:else}
 		<form class="flex flex-wrap items-center gap-2" onsubmit={handleQuickAdd}>
 			<div class="relative min-w-64 flex-1">
-				<Plus
-					size={16}
-					class="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-neutral-400"
-				/>
+				<span
+					class="pointer-events-none absolute inset-y-0 left-3 flex items-center text-neutral-400"
+				>
+					<Plus size={16} />
+				</span>
 				<input
 					type="text"
 					placeholder="Add a task"
@@ -306,10 +307,11 @@
 
 <div class="mb-4 flex flex-wrap items-center gap-3">
 	<div class="relative w-full sm:max-w-xs">
-		<Search
-			size={16}
-			class="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-neutral-400"
-		/>
+		<span
+			class="pointer-events-none absolute inset-y-0 left-3 flex items-center text-neutral-400"
+		>
+			<Search size={16} />
+		</span>
 		<input
 			type="search"
 			placeholder="Search tasks"

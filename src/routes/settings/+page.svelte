@@ -1,7 +1,6 @@
 <script lang="ts">
-	import { Check, Trash2 } from '@lucide/svelte';
+	import { Trash2 } from '@lucide/svelte';
 	import { settings, updateSetting } from '$lib/store.svelte';
-	import type { PrimaryColor } from '$lib/types';
 
 	let section = $state('Appearance');
 
@@ -12,15 +11,6 @@
 		{ value: 'dark', label: 'Dark' },
 		{ value: 'system', label: 'System' }
 	] as const;
-
-	const primaryColors: { value: PrimaryColor; label: string; swatch: string }[] = [
-		{ value: 'indigo', label: 'Indigo', swatch: 'bg-indigo-500' },
-		{ value: 'blue', label: 'Blue', swatch: 'bg-blue-500' },
-		{ value: 'violet', label: 'Violet', swatch: 'bg-violet-500' },
-		{ value: 'emerald', label: 'Emerald', swatch: 'bg-emerald-500' },
-		{ value: 'rose', label: 'Rose', swatch: 'bg-rose-500' },
-		{ value: 'amber', label: 'Amber', swatch: 'bg-amber-500' }
-	];
 </script>
 
 <svelte:head>
@@ -69,29 +59,6 @@
 									: 'text-neutral-500 hover:text-neutral-700'}"
 							>
 								{theme.label}
-							</button>
-						{/each}
-					</div>
-				</div>
-
-				<div class="mt-6">
-					<p class="text-xs font-medium text-neutral-600">Primary color</p>
-					<div class="mt-2 flex flex-wrap items-center gap-3">
-						{#each primaryColors as color (color.value)}
-							<button
-								type="button"
-								onclick={() => updateSetting('primary', color.value)}
-								class="group flex items-center gap-2 rounded-lg border px-2.5 py-1.5 transition-colors {settings.primary ===
-								color.value
-									? 'border-neutral-300 bg-neutral-100'
-									: 'border-neutral-200 bg-surface hover:bg-neutral-50'}"
-								aria-label="Use {color.label} as primary color"
-							>
-								<span class="size-4 rounded-full {color.swatch}"></span>
-								<span class="text-sm font-medium text-neutral-700">{color.label}</span>
-								{#if settings.primary === color.value}
-									<Check size={13} class="text-neutral-600" />
-								{/if}
 							</button>
 						{/each}
 					</div>
@@ -217,7 +184,7 @@
 		onclick={() => onchange(!value)}
 	>
 		<span
-			class="switch-thumb inline-block size-5 rounded-full bg-white shadow transition-transform {value ? 'translate-x-5' : 'translate-x-0'}"
+			class="switch-thumb absolute top-0.5 left-0.5 size-5 rounded-full bg-white shadow transition-all {value ? 'left-[22px]' : 'left-0.5'}"
 		></span>
 	</button>
 {/snippet}

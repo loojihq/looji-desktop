@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { Menu, X } from '@lucide/svelte';
 	import './layout.css';
-	import favicon from '$lib/assets/favicon.svg';
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import { applyTheme, initStore, runAutomations, status } from '$lib/store.svelte';
 
@@ -33,7 +32,7 @@
 </script>
 
 <svelte:head>
-	<link rel="icon" href={favicon} />
+	<link rel="icon" href="/favicon.png" />
 </svelte:head>
 
 <div class="min-h-screen">
@@ -87,9 +86,7 @@
 				</div>
 			{:else if !status.ready}
 				<div class="flex flex-col items-center justify-center py-24">
-					<span
-						class="size-8 animate-spin rounded-full border-2 border-neutral-300 border-t-indigo-600"
-					></span>
+					<span class="size-8 animate-pulse rounded-full bg-indigo-200"></span>
 					<p class="mt-3 text-sm text-neutral-400">Loading workspace</p>
 				</div>
 			{:else}

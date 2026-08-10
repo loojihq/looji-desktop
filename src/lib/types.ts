@@ -47,11 +47,8 @@ export type AuditEntry = {
 	time: string;
 };
 
-export type PrimaryColor = 'indigo' | 'blue' | 'violet' | 'emerald' | 'rose' | 'amber';
-
 export type Settings = {
 	theme: 'light' | 'dark' | 'system';
-	primary: PrimaryColor;
 	autoEscalate: boolean;
 	notifAssignments: boolean;
 	notifDigest: boolean;

@@ -129,7 +129,6 @@ export const auditLog = $state<AuditEntry[]>([]);
 export const status = $state({ ready: false, error: null as string | null });
 export const settings = $state<Settings>({
 	theme: 'system',
-	primary: 'indigo',
 	autoEscalate: true,
 	notifAssignments: true,
 	notifDigest: true,
@@ -326,7 +325,6 @@ export function applyTheme(): void {
 		settings.theme === 'dark' ||
 		(settings.theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
 	root.classList.toggle('dark', dark);
-	root.dataset.primary = settings.primary;
 }
 
 export async function updateSetting<K extends keyof Settings>(key: K, value: Settings[K]): Promise<void> {
@@ -337,7 +335,7 @@ export async function updateSetting<K extends keyof Settings>(key: K, value: Set
 	);
 	const previous = settings[key];
 	settings[key] = value;
-	if (key === 'workspaceName' || key === 'timezone' || key === 'theme' || key === 'primary') {
+	if (key === 'workspaceName' || key === 'timezone' || key === 'theme') {
 		await logAudit('settings', key, 'updated', `Changed setting "${key}" to ${String(value)}`, {
 			[key]: { from: previous, to: value }
 		});
