@@ -1,6 +1,15 @@
 import Database from '@tauri-apps/plugin-sql';
 import { avatarColors, taskStatusStyles } from './badges';
-import type { Activity, Member, Priority, Project, ProjectStatus, Task, TaskStatus } from './types';
+import type {
+	AuditEntry,
+	Member,
+	Priority,
+	Project,
+	ProjectStatus,
+	Settings,
+	Task,
+	TaskStatus
+} from './types';
 import { daysFromNow } from './utils';
 
 type MemberRow = {
@@ -34,15 +43,81 @@ type TaskRow = {
 	priority: string;
 	due: string;
 	tags: string;
+	updated_at: string;
 };
 
-type ActivityRow = {
+type AuditRow = {
 	id: string;
-	member_id: string | null;
+	entity_type: string;
+	entity_id: string;
 	action: string;
-	target: string;
+	summary: string;
+	details: string;
 	time: string;
 };
+
+type SettingsRow = { key: string; value: string };
+
+export const taskTransitions: Record<TaskStatus, TaskStatus[]> = {
+	backlog: ['todo'],
+	todo: ['backlog', 'in_progress'],
+	in_progress: ['todo', 'in_review'],
+	in_review: ['in_progress', 'done'],
+	done: ['todo']
+};
+
+export function canTransition(from: TaskStatus, to: TaskStatus): boolean {
+	return from === to || taskTransitions[from].includes(to);
+}
+
+function assertTransition(from: TaskStatus, to: TaskStatus): void {
+	if (from === to) return;
+	if (!taskTransitions[from].includes(to)) {
+		throw new Error(
+			`Cannot move a task from ${taskStatusStyles[from].label} directly to ${taskStatusStyles[to].label}. Allowed next steps: ${taskTransitions[from]
+				.map((s) => taskStatusStyles[s].label)
+				.join(', ')}.`
+		);
+	}
+}
+
+function assertProjectName(name: string): void {
+	const trimmed = name.trim();
+	if (!trimmed) throw new Error('Project name is required.');
+	if (trimmed.length > 80) throw new Error('Project name must be 80 characters or fewer.');
+}
+
+function assertTaskTitle(title: string): void {
+	const trimmed = title.trim();
+	if (!trimmed) throw new Error('Task title is required.');
+	if (trimmed.length > 200) throw new Error('Task title must be 200 characters or fewer.');
+}
+
+function assertMemberName(name: string): void {
+	const trimmed = name.trim();
+	if (!trimmed) throw new Error('Member name is required.');
+	if (trimmed.length > 80) throw new Error('Member name must be 80 characters or fewer.');
+}
+
+function assertEmail(email: string): void {
+	const trimmed = email.trim();
+	if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+		throw new Error('Please enter a valid email address.');
+	}
+	if (trimmed.length > 200) throw new Error('Email must be 200 characters or fewer.');
+}
+
+function assertProjectExists(projectId: string): void {
+	if (!projects.some((p) => p.id === projectId)) {
+		throw new Error('The task must belong to a project that exists.');
+	}
+}
+
+function assertMemberExists(memberId: string | null): void {
+	if (memberId && !members.some((m) => m.id === memberId)) {
+		throw new Error('The selected assignee no longer exists.');
+	}
+}
 
 let db: Database | null = null;
 let initPromise: Promise<void> | null = null;
@@ -50,8 +125,19 @@ let initPromise: Promise<void> | null = null;
 export const members = $state<Member[]>([]);
 export const projects = $state<Project[]>([]);
 export const tasks = $state<Task[]>([]);
-export const activities = $state<Activity[]>([]);
+export const auditLog = $state<AuditEntry[]>([]);
 export const status = $state({ ready: false, error: null as string | null });
+export const settings = $state<Settings>({
+	theme: 'system',
+	primary: 'indigo',
+	autoEscalate: true,
+	notifAssignments: true,
+	notifDigest: true,
+	notifMentions: true,
+	notifProduct: false,
+	workspaceName: 'Workmaster',
+	timezone: 'America/Los_Angeles'
+});
 
 function requireDb(): Database {
 	if (!db) throw new Error('Store not initialised');
@@ -106,16 +192,25 @@ function taskFromRow(row: TaskRow): Task {
 		status: row.status as TaskStatus,
 		priority: row.priority as Priority,
 		due: row.due,
-		tags
+		tags,
+		updatedAt: row.updated_at
 	};
 }
 
-function activityFromRow(row: ActivityRow): Activity {
+function auditFromRow(row: AuditRow): AuditEntry {
+	let details: AuditEntry['details'] = {};
+	try {
+		details = JSON.parse(row.details) as AuditEntry['details'];
+	} catch {
+		details = {};
+	}
 	return {
 		id: row.id,
-		memberId: row.member_id,
+		entityType: row.entity_type,
+		entityId: row.entity_id,
 		action: row.action,
-		target: row.target,
+		summary: row.summary,
+		details,
 		time: row.time
 	};
 }
@@ -129,6 +224,7 @@ async function load(): Promise<void> {
 	try {
 		db = await Database.load('sqlite:workmaster.db');
 		await refreshAll();
+		await runAutomations();
 	} catch (err) {
 		console.error('Failed to load the database', err);
 		status.error = err instanceof Error ? err.message : String(err);
@@ -161,10 +257,20 @@ async function refreshAll(): Promise<void> {
 	const taskRows = await database.select<TaskRow[]>('SELECT * FROM tasks ORDER BY rowid');
 	tasks.splice(0, tasks.length, ...taskRows.map(taskFromRow));
 
-	const activityRows = await database.select<ActivityRow[]>(
-		'SELECT * FROM activities ORDER BY rowid DESC'
-	);
-	activities.splice(0, activities.length, ...activityRows.map(activityFromRow));
+	const auditRows = await database.select<AuditRow[]>('SELECT * FROM audit_log ORDER BY rowid DESC');
+	auditLog.splice(0, auditLog.length, ...auditRows.map(auditFromRow));
+
+	const settingRows = await database.select<SettingsRow[]>('SELECT key, value FROM settings');
+	for (const row of settingRows) {
+		try {
+			const parsed = JSON.parse(row.value);
+			if (row.key in settings) {
+				(settings as unknown as Record<string, unknown>)[row.key] = parsed;
+			}
+		} catch {
+			// ignore malformed settings values
+		}
+	}
 }
 
 export function memberById(id: string | null): Member | undefined {
@@ -190,12 +296,66 @@ function slugify(name: string): string {
 		.replace(/(^-|-$)/g, '');
 }
 
+async function logAudit(
+	entityType: string,
+	entityId: string,
+	action: string,
+	summary: string,
+	details: AuditEntry['details'] = {}
+): Promise<void> {
+	const database = requireDb();
+	const entry: AuditEntry = {
+		id: newId(),
+		entityType,
+		entityId,
+		action,
+		summary,
+		details,
+		time: nowIso()
+	};
+	await database.execute(
+		'INSERT INTO audit_log (id, entity_type, entity_id, action, summary, details, time) VALUES (?, ?, ?, ?, ?, ?, ?)',
+		[entry.id, entityType, entityId, action, summary, JSON.stringify(details), entry.time]
+	);
+	auditLog.unshift(entry);
+}
+
+export function applyTheme(): void {
+	const root = document.documentElement;
+	const dark =
+		settings.theme === 'dark' ||
+		(settings.theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+	root.classList.toggle('dark', dark);
+	root.dataset.primary = settings.primary;
+}
+
+export async function updateSetting<K extends keyof Settings>(key: K, value: Settings[K]): Promise<void> {
+	const database = requireDb();
+	await database.execute(
+		'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+		[key, JSON.stringify(value)]
+	);
+	const previous = settings[key];
+	settings[key] = value;
+	if (key === 'workspaceName' || key === 'timezone' || key === 'theme' || key === 'primary') {
+		await logAudit('settings', key, 'updated', `Changed setting "${key}" to ${String(value)}`, {
+			[key]: { from: previous, to: value }
+		});
+	}
+}
+
 export async function addMember(input: { name: string; email: string; role: string }): Promise<void> {
 	const database = requireDb();
+	assertMemberName(input.name);
+	assertEmail(input.email);
+	const email = input.email.trim();
+	if (members.some((m) => m.email.toLowerCase() === email.toLowerCase())) {
+		throw new Error('A member with this email already exists.');
+	}
 	const member: Member = {
 		id: newId(),
-		name: input.name,
-		email: input.email,
+		name: input.name.trim(),
+		email,
 		role: input.role,
 		color: avatarColors[members.length % avatarColors.length],
 		online: true
@@ -205,20 +365,81 @@ export async function addMember(input: { name: string; email: string; role: stri
 		[member.id, member.name, member.email, member.role, member.color]
 	);
 	members.push(member);
+	await logAudit('member', member.id, 'created', `Added member "${member.name}"`, {
+		name: { from: null, to: member.name },
+		email: { from: null, to: member.email },
+		role: { from: null, to: member.role }
+	});
 }
 
-	export async function createProject(input: {
+export async function updateMember(
+	id: string,
+	input: { name: string; email: string; role: string }
+): Promise<void> {
+	const member = members.find((m) => m.id === id);
+	if (!member) return;
+	assertMemberName(input.name);
+	assertEmail(input.email);
+	const email = input.email.trim();
+	if (members.some((m) => m.id !== id && m.email.toLowerCase() === email.toLowerCase())) {
+		throw new Error('A member with this email already exists.');
+	}
+	const database = requireDb();
+	const changes: AuditEntry['details'] = {};
+	if (member.name !== input.name.trim()) changes.name = { from: member.name, to: input.name.trim() };
+	if (member.email !== email) changes.email = { from: member.email, to: email };
+	if (member.role !== input.role) changes.role = { from: member.role, to: input.role };
+	await database.execute('UPDATE members SET name = ?, email = ?, role = ? WHERE id = ?', [
+		input.name.trim(),
+		email,
+		input.role,
+		id
+	]);
+	member.name = input.name.trim();
+	member.email = email;
+	member.role = input.role;
+	if (Object.keys(changes).length > 0) {
+		await logAudit('member', id, 'updated', `Updated member "${member.name}"`, changes);
+	}
+}
+
+export async function deleteMember(id: string): Promise<void> {
+	const member = members.find((m) => m.id === id);
+	if (!member) return;
+	const openTasks = tasks.filter((t) => t.assigneeId === id && t.status !== 'done').length;
+	if (openTasks > 0) {
+		throw new Error(
+			`Cannot remove "${member.name}" while they have ${openTasks} open task${openTasks === 1 ? '' : 's'}. Reassign or complete them first.`
+		);
+	}
+	const database = requireDb();
+	await database.execute('UPDATE tasks SET assignee_id = NULL WHERE assignee_id = ?', [id]);
+	await database.execute('DELETE FROM project_members WHERE member_id = ?', [id]);
+	await database.execute('DELETE FROM members WHERE id = ?', [id]);
+	for (const task of tasks) {
+		if (task.assigneeId === id) task.assigneeId = null;
+	}
+	members.splice(members.indexOf(member), 1);
+	await logAudit('member', id, 'removed', `Removed member "${member.name}"`, {});
+}
+
+export async function createProject(input: {
 	name: string;
 	description?: string;
 	status?: ProjectStatus;
 	due?: string;
 }): Promise<void> {
 	const database = requireDb();
+	assertProjectName(input.name);
+	const name = input.name.trim();
+	if (projects.some((p) => p.name.toLowerCase() === name.toLowerCase())) {
+		throw new Error('A project with this name already exists.');
+	}
 	const project: Project = {
 		id: newId(),
-		slug: slugify(input.name),
-		name: input.name,
-		description: input.description ?? 'A new project on Workmaster.',
+		slug: slugify(name),
+		name,
+		description: input.description?.trim() ?? '',
 		status: input.status ?? 'planning',
 		progress: 0,
 		due: input.due ?? daysFromNow(30),
@@ -230,84 +451,10 @@ export async function addMember(input: { name: string; email: string; role: stri
 		[project.id, project.slug, project.name, project.description, project.status, project.due, project.color]
 	);
 	projects.unshift(project);
-	await addActivity('created', project.name);
-}
-
-export async function createTask(input: {
-	title: string;
-	projectId: string;
-	status?: TaskStatus;
-	priority?: Priority;
-	assigneeId?: string | null;
-	due?: string;
-	tags?: string[];
-}): Promise<void> {
-	const database = requireDb();
-	const task: Task = {
-		id: newId(),
-		title: input.title,
-		projectId: input.projectId,
-		assigneeId: input.assigneeId ?? null,
-		status: input.status ?? 'backlog',
-		priority: input.priority ?? 'medium',
-		due: input.due ?? daysFromNow(7),
-		tags: input.tags ?? []
-	};
-	await database.execute(
-		'INSERT INTO tasks (id, title, project_id, assignee_id, status, priority, due, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-		[
-			task.id,
-			task.title,
-			task.projectId,
-			task.assigneeId,
-			task.status,
-			task.priority,
-			task.due,
-			JSON.stringify(task.tags)
-		]
-	);
-	tasks.unshift(task);
-	await addActivity('created', task.title);
-}
-
-export async function moveTask(taskId: string, status: TaskStatus): Promise<void> {
-	const database = requireDb();
-	const task = tasks.find((t) => t.id === taskId);
-	if (!task || task.status === status) return;
-	const previous = task.status;
-	await database.execute('UPDATE tasks SET status = ? WHERE id = ?', [status, taskId]);
-	task.status = status;
-	await addActivity(
-		'moved',
-		`${task.title} from ${taskStatusStyles[previous].label} to ${taskStatusStyles[status].label}`
-	);
-}
-
-export async function toggleTaskDone(taskId: string): Promise<void> {
-	const database = requireDb();
-	const task = tasks.find((t) => t.id === taskId);
-	if (!task) return;
-	const wasDone = task.status === 'done';
-	const next = wasDone ? 'todo' : 'done';
-	await database.execute('UPDATE tasks SET status = ? WHERE id = ?', [next, taskId]);
-	task.status = next as TaskStatus;
-	await addActivity(wasDone ? 'reopened' : 'completed', task.title);
-}
-
-async function addActivity(action: string, target: string): Promise<void> {
-	const database = requireDb();
-	const activity: Activity = {
-		id: newId(),
-		memberId: null,
-		action,
-		target,
-		time: nowIso()
-	};
-	await database.execute(
-		'INSERT INTO activities (id, member_id, action, target, time) VALUES (?, NULL, ?, ?, ?)',
-		[activity.id, action, target, activity.time]
-	);
-	activities.unshift(activity);
+	await logAudit('project', project.id, 'created', `Created project "${project.name}"`, {
+		status: { from: null, to: project.status },
+		due: { from: null, to: project.due }
+	});
 }
 
 export async function updateProject(
@@ -316,16 +463,38 @@ export async function updateProject(
 ): Promise<void> {
 	const project = projects.find((p) => p.id === id);
 	if (!project) return;
+	assertProjectName(input.name);
+	const name = input.name.trim();
+	if (projects.some((p) => p.id !== id && p.name.toLowerCase() === name.toLowerCase())) {
+		throw new Error('A project with this name already exists.');
+	}
+	if (input.status === 'completed' && project.status !== 'completed') {
+		const open = tasks.filter((t) => t.projectId === id && t.status !== 'done').length;
+		if (open > 0) {
+			throw new Error(
+				`Cannot mark "${name}" as completed while it has ${open} open task${open === 1 ? '' : 's'}.`
+			);
+		}
+	}
 	const database = requireDb();
+	const changes: AuditEntry['details'] = {};
+	if (project.name !== name) changes.name = { from: project.name, to: name };
+	if (project.description !== input.description.trim()) {
+		changes.description = { from: project.description, to: input.description.trim() };
+	}
+	if (project.status !== input.status) changes.status = { from: project.status, to: input.status };
+	if (project.due !== input.due) changes.due = { from: project.due, to: input.due };
 	await database.execute(
 		'UPDATE projects SET name = ?, description = ?, status = ?, due = ? WHERE id = ?',
-		[input.name, input.description, input.status, input.due, id]
+		[name, input.description.trim(), input.status, input.due, id]
 	);
-	project.name = input.name;
-	project.description = input.description;
+	project.name = name;
+	project.description = input.description.trim();
 	project.status = input.status;
 	project.due = input.due;
-	await addActivity('updated', project.name);
+	if (Object.keys(changes).length > 0) {
+		await logAudit('project', id, 'updated', `Updated project "${project.name}"`, changes);
+	}
 }
 
 export async function deleteProject(id: string): Promise<void> {
@@ -338,7 +507,53 @@ export async function deleteProject(id: string): Promise<void> {
 	const remainingTasks = tasks.filter((task) => task.projectId !== id);
 	tasks.splice(0, tasks.length, ...remainingTasks);
 	projects.splice(projects.indexOf(project), 1);
-	await addActivity('deleted', project.name);
+	await logAudit('project', id, 'deleted', `Deleted project "${project.name}" and its tasks`, {});
+}
+
+export async function createTask(input: {
+	title: string;
+	projectId: string;
+	status?: TaskStatus;
+	priority?: Priority;
+	assigneeId?: string | null;
+	due?: string;
+	tags?: string[];
+}): Promise<void> {
+	const database = requireDb();
+	assertTaskTitle(input.title);
+	assertProjectExists(input.projectId);
+	assertMemberExists(input.assigneeId ?? null);
+	const task: Task = {
+		id: newId(),
+		title: input.title.trim(),
+		projectId: input.projectId,
+		assigneeId: input.assigneeId ?? null,
+		status: input.status ?? 'backlog',
+		priority: input.priority ?? 'medium',
+		due: input.due ?? daysFromNow(7),
+		tags: input.tags ?? [],
+		updatedAt: nowIso()
+	};
+	await database.execute(
+		'INSERT INTO tasks (id, title, project_id, assignee_id, status, priority, due, tags, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+		[
+			task.id,
+			task.title,
+			task.projectId,
+			task.assigneeId,
+			task.status,
+			task.priority,
+			task.due,
+			JSON.stringify(task.tags),
+			task.updatedAt
+		]
+	);
+	tasks.unshift(task);
+	await logAudit('task', task.id, 'created', `Created task "${task.title}"`, {
+		project: { from: null, to: projectById(task.projectId)?.name ?? task.projectId },
+		status: { from: null, to: task.status },
+		priority: { from: null, to: task.priority }
+	});
 }
 
 export async function updateTask(
@@ -355,28 +570,97 @@ export async function updateTask(
 ): Promise<void> {
 	const task = tasks.find((t) => t.id === id);
 	if (!task) return;
+	assertTaskTitle(input.title);
+	assertProjectExists(input.projectId);
+	assertMemberExists(input.assigneeId);
+	if (task.status !== input.status) assertTransition(task.status, input.status);
 	const database = requireDb();
+	const changes: AuditEntry['details'] = {};
+	if (task.title !== input.title.trim()) changes.title = { from: task.title, to: input.title.trim() };
+	if (task.projectId !== input.projectId) {
+		changes.project = {
+			from: projectById(task.projectId)?.name ?? task.projectId,
+			to: projectById(input.projectId)?.name ?? input.projectId
+		};
+	}
+	if (task.assigneeId !== input.assigneeId) {
+		changes.assignee = { from: task.assigneeId ?? 'Unassigned', to: input.assigneeId ?? 'Unassigned' };
+	}
+	if (task.status !== input.status) changes.status = { from: task.status, to: input.status };
+	if (task.priority !== input.priority) changes.priority = { from: task.priority, to: input.priority };
+	if (task.due !== input.due) changes.due = { from: task.due, to: input.due };
+	const nextTags = input.tags ?? [];
+	if (JSON.stringify(task.tags) !== JSON.stringify(nextTags)) {
+		changes.tags = { from: task.tags.join(', '), to: nextTags.join(', ') };
+	}
+	const updatedAt = nowIso();
 	await database.execute(
-		'UPDATE tasks SET title = ?, project_id = ?, assignee_id = ?, status = ?, priority = ?, due = ?, tags = ? WHERE id = ?',
+		'UPDATE tasks SET title = ?, project_id = ?, assignee_id = ?, status = ?, priority = ?, due = ?, tags = ?, updated_at = ? WHERE id = ?',
 		[
-			input.title,
+			input.title.trim(),
 			input.projectId,
 			input.assigneeId,
 			input.status,
 			input.priority,
 			input.due,
-			JSON.stringify(input.tags),
+			JSON.stringify(nextTags),
+			updatedAt,
 			id
 		]
 	);
-	task.title = input.title;
+	task.title = input.title.trim();
 	task.projectId = input.projectId;
 	task.assigneeId = input.assigneeId;
 	task.status = input.status;
 	task.priority = input.priority;
 	task.due = input.due;
-	task.tags = input.tags;
-	await addActivity('updated', task.title);
+	task.tags = nextTags;
+	task.updatedAt = updatedAt;
+	if (Object.keys(changes).length > 0) {
+		await logAudit('task', id, 'updated', `Updated task "${task.title}"`, changes);
+	}
+}
+
+export async function moveTask(taskId: string, status: TaskStatus): Promise<void> {
+	const database = requireDb();
+	const task = tasks.find((t) => t.id === taskId);
+	if (!task || task.status === status) return;
+	assertTransition(task.status, status);
+	const previous = task.status;
+	const updatedAt = nowIso();
+	await database.execute('UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?', [
+		status,
+		updatedAt,
+		taskId
+	]);
+	task.status = status;
+	task.updatedAt = updatedAt;
+	await logAudit('task', taskId, 'moved', `Moved "${task.title}" from ${taskStatusStyles[previous].label} to ${taskStatusStyles[status].label}`, {
+		status: { from: previous, to: status }
+	});
+}
+
+export async function toggleTaskDone(taskId: string): Promise<void> {
+	const database = requireDb();
+	const task = tasks.find((t) => t.id === taskId);
+	if (!task) return;
+	const wasDone = task.status === 'done';
+	const next = wasDone ? 'todo' : 'done';
+	const updatedAt = nowIso();
+	await database.execute('UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?', [
+		next,
+		updatedAt,
+		taskId
+	]);
+	task.status = next as TaskStatus;
+	task.updatedAt = updatedAt;
+	await logAudit(
+		'task',
+		taskId,
+		wasDone ? 'reopened' : 'completed',
+		wasDone ? `Reopened "${task.title}"` : `Completed "${task.title}"`,
+		{ status: { from: wasDone ? 'done' : 'todo', to: next } }
+	);
 }
 
 export async function deleteTask(id: string): Promise<void> {
@@ -385,38 +669,38 @@ export async function deleteTask(id: string): Promise<void> {
 	const database = requireDb();
 	await database.execute('DELETE FROM tasks WHERE id = ?', [id]);
 	tasks.splice(tasks.indexOf(task), 1);
-	await addActivity('deleted', task.title);
+	await logAudit('task', id, 'deleted', `Deleted task "${task.title}"`, {});
 }
 
-export async function updateMember(
-	id: string,
-	input: { name: string; email: string; role: string }
-): Promise<void> {
-	const member = members.find((m) => m.id === id);
-	if (!member) return;
-	const database = requireDb();
-	await database.execute('UPDATE members SET name = ?, email = ?, role = ? WHERE id = ?', [
-		input.name,
-		input.email,
-		input.role,
-		id
-	]);
-	member.name = input.name;
-	member.email = input.email;
-	member.role = input.role;
-	await addActivity('updated', member.name);
-}
-
-export async function deleteMember(id: string): Promise<void> {
-	const member = members.find((m) => m.id === id);
-	if (!member) return;
-	const database = requireDb();
-	await database.execute('UPDATE tasks SET assignee_id = NULL WHERE assignee_id = ?', [id]);
-	await database.execute('DELETE FROM project_members WHERE member_id = ?', [id]);
-	await database.execute('DELETE FROM members WHERE id = ?', [id]);
-	for (const task of tasks) {
-		if (task.assigneeId === id) task.assigneeId = null;
+export async function runAutomations(): Promise<void> {
+	try {
+		if (!settings.autoEscalate) return;
+		const database = requireDb();
+		const now = Date.now();
+		const escalations: { task: Task; from: TaskStatus; to: TaskStatus }[] = [];
+		for (const task of tasks) {
+			if (task.status === 'todo' && task.due && new Date(task.due).getTime() < now) {
+				escalations.push({ task, from: task.status, to: 'in_progress' });
+			}
+		}
+		for (const { task, from, to } of escalations) {
+			const updatedAt = nowIso();
+			await database.execute('UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?', [
+				to,
+				updatedAt,
+				task.id
+			]);
+			task.status = to;
+			task.updatedAt = updatedAt;
+			await logAudit(
+				'task',
+				task.id,
+				'auto-moved',
+				`Auto-moved "${task.title}" to ${taskStatusStyles[to].label} (overdue)`,
+				{ status: { from, to } }
+			);
+		}
+	} catch (err) {
+		console.error('Automation run failed', err);
 	}
-	members.splice(members.indexOf(member), 1);
-	await addActivity('removed', member.name);
 }

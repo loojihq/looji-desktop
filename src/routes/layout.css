@@ -3,10 +3,55 @@
 @plugin '@tailwindcss/forms';
 @plugin '@tailwindcss/typography';
 
-@theme {
+@theme inline {
 	--font-sans:
 		'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue',
 		Arial, sans-serif;
+	--color-background: var(--wm-background);
+	--color-surface: var(--wm-surface);
+	--color-foreground: var(--wm-foreground);
+	--color-overlay: var(--wm-overlay);
+}
+
+:root {
+	--wm-background: #f5f5f5;
+	--wm-surface: #ffffff;
+	--wm-foreground: #18181b;
+	--wm-overlay: rgb(0 0 0 / 0.5);
+}
+
+.dark {
+	--wm-background: #17171a;
+	--wm-surface: #232327;
+	--wm-foreground: #f4f4f5;
+	--wm-overlay: rgb(0 0 0 / 0.6);
+	--color-white: var(--wm-surface);
+	--color-neutral-50: #1d1d21;
+	--color-neutral-100: #212126;
+	--color-neutral-200: #2d2d33;
+	--color-neutral-300: #3d3d44;
+	--color-neutral-400: #5a5a63;
+	--color-neutral-500: #787880;
+	--color-neutral-600: #a3a3ad;
+	--color-neutral-700: #cfcfd6;
+	--color-neutral-800: #e3e3e8;
+	--color-neutral-900: #f4f4f5;
+}
+
+/* Keep text-on-colored surfaces white in dark mode */
+.dark .text-white {
+	color: #ffffff;
+}
+
+/* The forms plugin hardcodes white inputs; give them the surface color in dark */
+.dark input,
+.dark select,
+.dark textarea {
+	background-color: var(--wm-surface);
+}
+
+.dark .switch-thumb {
+	background-color: #ffffff;
 }
 
 html {
@@ -15,8 +60,8 @@ html {
 
 body {
 	min-height: 100%;
-	background-color: var(--color-neutral-100);
-	color: var(--color-neutral-900);
+	background-color: var(--color-background);
+	color: var(--color-foreground);
 	-webkit-font-smoothing: antialiased;
 	text-rendering: optimizeLegibility;
 }
@@ -47,4 +92,84 @@ body {
 
 ::-webkit-scrollbar-thumb:hover {
 	background-color: var(--color-neutral-400);
+}
+
+/* Primary color palettes. The app uses `indigo-*` classes as its accent,
+   so switching palettes simply re-maps the indigo scale at runtime. */
+[data-primary='indigo'] {
+	--color-indigo-50: #eef2ff;
+	--color-indigo-100: #e0e7ff;
+	--color-indigo-200: #c7d2fe;
+	--color-indigo-300: #a5b4fc;
+	--color-indigo-400: #818cf8;
+	--color-indigo-500: #6366f1;
+	--color-indigo-600: #4f46e5;
+	--color-indigo-700: #4338ca;
+	--color-indigo-800: #3730a3;
+	--color-indigo-900: #312e81;
+}
+
+[data-primary='blue'] {
+	--color-indigo-50: #eff6ff;
+	--color-indigo-100: #dbeafe;
+	--color-indigo-200: #bfdbfe;
+	--color-indigo-300: #93c5fd;
+	--color-indigo-400: #60a5fa;
+	--color-indigo-500: #3b82f6;
+	--color-indigo-600: #2563eb;
+	--color-indigo-700: #1d4ed8;
+	--color-indigo-800: #1e40af;
+	--color-indigo-900: #1e3a8a;
+}
+
+[data-primary='violet'] {
+	--color-indigo-50: #f5f3ff;
+	--color-indigo-100: #ede9fe;
+	--color-indigo-200: #ddd6fe;
+	--color-indigo-300: #c4b5fd;
+	--color-indigo-400: #a78bfa;
+	--color-indigo-500: #8b5cf6;
+	--color-indigo-600: #7c3aed;
+	--color-indigo-700: #6d28d9;
+	--color-indigo-800: #5b21b6;
+	--color-indigo-900: #4c1d95;
+}
+
+[data-primary='emerald'] {
+	--color-indigo-50: #ecfdf5;
+	--color-indigo-100: #d1fae5;
+	--color-indigo-200: #a7f3d0;
+	--color-indigo-300: #6ee7b7;
+	--color-indigo-400: #34d399;
+	--color-indigo-500: #10b981;
+	--color-indigo-600: #059669;
+	--color-indigo-700: #047857;
+	--color-indigo-800: #065f46;
+	--color-indigo-900: #064e3b;
+}
+
+[data-primary='rose'] {
+	--color-indigo-50: #fff1f2;
+	--color-indigo-100: #ffe4e6;
+	--color-indigo-200: #fecdd3;
+	--color-indigo-300: #fda4af;
+	--color-indigo-400: #fb7185;
+	--color-indigo-500: #f43f5e;
+	--color-indigo-600: #e11d48;
+	--color-indigo-700: #be123c;
+	--color-indigo-800: #9f1239;
+	--color-indigo-900: #881337;
+}
+
+[data-primary='amber'] {
+	--color-indigo-50: #fffbeb;
+	--color-indigo-100: #fef3c7;
+	--color-indigo-200: #fde68a;
+	--color-indigo-300: #fcd34d;
+	--color-indigo-400: #fbbf24;
+	--color-indigo-500: #f59e0b;
+	--color-indigo-600: #d97706;
+	--color-indigo-700: #b45309;
+	--color-indigo-800: #92400e;
+	--color-indigo-900: #78350f;
 }

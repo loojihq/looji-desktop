@@ -34,7 +34,34 @@ export type Task = {
 	priority: Priority;
 	due: string;
 	tags: string[];
+	updatedAt: string;
 };
+
+export type AuditEntry = {
+	id: string;
+	entityType: string;
+	entityId: string;
+	action: string;
+	summary: string;
+	details: Record<string, { from: unknown; to: unknown }>;
+	time: string;
+};
+
+export type PrimaryColor = 'indigo' | 'blue' | 'violet' | 'emerald' | 'rose' | 'amber';
+
+export type Settings = {
+	theme: 'light' | 'dark' | 'system';
+	primary: PrimaryColor;
+	autoEscalate: boolean;
+	notifAssignments: boolean;
+	notifDigest: boolean;
+	notifMentions: boolean;
+	notifProduct: boolean;
+	workspaceName: string;
+	timezone: string;
+};
+
+export type EntityType = 'project' | 'task' | 'member' | 'settings' | 'activity';
 
 export type Activity = {
 	id: string;

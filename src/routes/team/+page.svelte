@@ -8,6 +8,7 @@
 	let formOpen = $state(false);
 	let editTarget = $state<Member | null>(null);
 	let deleteTarget = $state<Member | null>(null);
+	let deleteError = $state('');
 
 	let formName = $state('');
 	let formEmail = $state('');
@@ -56,8 +57,12 @@
 
 	async function handleDelete() {
 		if (!deleteTarget) return;
-		await deleteMember(deleteTarget.id);
-		deleteTarget = null;
+		try {
+			await deleteMember(deleteTarget.id);
+			deleteTarget = null;
+		} catch (err) {
+			deleteError = err instanceof Error ? err.message : String(err);
+		}
 	}
 
 	const openCountFor = (id: string) =>
@@ -216,6 +221,22 @@
 				</div>
 			</div>
 		{/each}
+	</div>
+{/if}
+
+{#if deleteError}
+	<div
+		class="mb-4 flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700"
+	>
+		<p>{deleteError}</p>
+		<button
+			type="button"
+			class="shrink-0 rounded-md p-1 text-red-400 hover:bg-red-100 hover:text-red-700"
+			aria-label="Dismiss"
+			onclick={() => (deleteError = '')}
+		>
+			<X size={14} />
+		</button>
 	</div>
 {/if}
 

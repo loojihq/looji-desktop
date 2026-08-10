@@ -2,13 +2,14 @@
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { ArrowLeft, CalendarDays, Pencil, Plus, Trash2, User } from '@lucide/svelte';
+	import { ArrowLeft, CalendarDays, Pencil, Plus, Trash2, User, X } from '@lucide/svelte';
 	import Avatar from '$lib/components/Avatar.svelte';
 	import Badge from '$lib/components/Badge.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import ProgressBar from '$lib/components/ProgressBar.svelte';
 	import { projectAccents, priorityStyles, projectStatusStyles, taskStatusStyles } from '$lib/badges';
 	import {
+		canTransition,
 		createTask,
 		deleteProject,
 		deleteTask,
@@ -18,6 +19,7 @@
 		projectProgress,
 		projects,
 		tasks,
+		taskTransitions,
 		updateProject,
 		updateTask
 	} from '$lib/store.svelte';
@@ -55,9 +57,27 @@
 
 	let draggingId = $state<string | null>(null);
 	let overStatus = $state<TaskStatus | null>(null);
+	let dropError = $state('');
+
+	function isValidTarget(status: TaskStatus): boolean {
+		if (!draggingId) return false;
+		const task = tasks.find((t) => t.id === draggingId);
+		if (!task) return false;
+		return canTransition(task.status, status);
+	}
 
 	function handleDrop(status: TaskStatus) {
-		if (draggingId) moveTask(draggingId, status);
+		if (draggingId) {
+			const task = tasks.find((t) => t.id === draggingId);
+			if (task && !canTransition(task.status, status)) {
+				dropError = `Cannot move "${task.title}" from ${taskStatusStyles[task.status].label} directly to ${taskStatusStyles[status].label}. Allowed next steps: ${taskTransitions[task.status]
+					.map((s) => taskStatusStyles[s].label)
+					.join(', ')}.`;
+			} else {
+				dropError = '';
+				moveTask(draggingId, status);
+			}
+		}
 		draggingId = null;
 		overStatus = null;
 	}
@@ -67,6 +87,7 @@
 	let newAssigneeId = $state('');
 	let deleteProjectOpen = $state(false);
 	let deleteTaskTarget = $state<Task | null>(null);
+	let deleteError = $state('');
 
 	let projectEditOpen = $state(false);
 	let projName = $state('');
@@ -172,15 +193,23 @@
 
 	async function handleDeleteTask() {
 		if (!deleteTaskTarget) return;
-		await deleteTask(deleteTaskTarget.id);
-		deleteTaskTarget = null;
+		try {
+			await deleteTask(deleteTaskTarget.id);
+			deleteTaskTarget = null;
+		} catch (err) {
+			deleteError = err instanceof Error ? err.message : String(err);
+		}
 	}
 
 	async function handleDeleteProject() {
 		if (!project) return;
-		await deleteProject(project.id);
-		deleteProjectOpen = false;
-		await goto('/projects');
+		try {
+			await deleteProject(project.id);
+			deleteProjectOpen = false;
+			await goto('/projects');
+		} catch (err) {
+			deleteError = err instanceof Error ? err.message : String(err);
+		}
 	}
 </script>
 
@@ -264,6 +293,20 @@
 			<p class="text-xs text-neutral-400">{openCount} open tasks</p>
 		</div>
 	</section>
+
+	{#if deleteError}
+		<div class="mb-4 flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
+			<p>{deleteError}</p>
+			<button
+				type="button"
+				class="shrink-0 rounded-md p-1 text-red-400 hover:bg-red-100 hover:text-red-700"
+				aria-label="Dismiss"
+				onclick={() => (deleteError = '')}
+			>
+				<X size={14} />
+			</button>
+		</div>
+	{/if}
 
 	{#if projectEditOpen}
 		<form
@@ -444,14 +487,30 @@
 	{/if}
 
 	<section class="mt-6">
+		{#if dropError}
+			<div class="mb-4 flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
+				<p>{dropError}</p>
+				<button
+					type="button"
+					class="shrink-0 rounded-md p-1 text-red-400 hover:bg-red-100 hover:text-red-700"
+					aria-label="Dismiss"
+					onclick={() => (dropError = '')}
+				>
+					<X size={14} />
+				</button>
+			</div>
+		{/if}
 		<div class="flex gap-4 overflow-x-auto pb-4">
 			{#each columns as status (status)}
 				<div
 					role="group"
 					aria-label={taskStatusStyles[status].label}
-					class="w-72 shrink-0 rounded-xl border p-3 transition-colors {overStatus === status
+					class="w-72 shrink-0 rounded-xl border p-3 transition-colors {overStatus === status &&
+					isValidTarget(status)
 						? 'border-indigo-300 bg-indigo-50/70'
-						: 'border-neutral-200 bg-neutral-50/80'}"
+						: 'border-neutral-200 bg-neutral-50/80'} {draggingId && !isValidTarget(status)
+						? 'opacity-50'
+						: ''}"
 					ondragover={(event) => {
 						event.preventDefault();
 						overStatus = status;

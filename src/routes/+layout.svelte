@@ -3,7 +3,7 @@
 	import './layout.css';
 	import favicon from '$lib/assets/favicon.svg';
 	import Sidebar from '$lib/components/Sidebar.svelte';
-	import { initStore, status } from '$lib/store.svelte';
+	import { applyTheme, initStore, runAutomations, status } from '$lib/store.svelte';
 
 	let { children } = $props();
 
@@ -11,6 +11,15 @@
 
 	$effect(() => {
 		initStore();
+	});
+
+	$effect(() => {
+		applyTheme();
+	});
+
+	$effect(() => {
+		const timer = setInterval(() => runAutomations(), 30 * 60 * 1000);
+		return () => clearInterval(timer);
 	});
 
 	$effect(() => {
@@ -35,7 +44,7 @@
 	{#if mobileOpen}
 		<div class="fixed inset-0 z-50 lg:hidden">
 			<div
-				class="absolute inset-0 bg-neutral-900/50"
+				class="absolute inset-0 bg-overlay"
 				role="presentation"
 				onclick={() => (mobileOpen = false)}
 			></div>

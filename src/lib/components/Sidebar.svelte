@@ -1,7 +1,15 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
-	import { FolderKanban, Layers, LayoutDashboard, ListTodo, Settings, Users } from '@lucide/svelte';
+	import {
+		Activity,
+		FolderKanban,
+		Layers,
+		LayoutDashboard,
+		ListTodo,
+		Settings,
+		Users
+	} from '@lucide/svelte';
 	import { projectAccents } from '$lib/badges';
 	import { projects } from '$lib/store.svelte';
 
@@ -11,6 +19,7 @@
 		{ href: '/', label: 'Dashboard', icon: LayoutDashboard },
 		{ href: '/projects', label: 'Projects', icon: FolderKanban },
 		{ href: '/tasks', label: 'Tasks', icon: ListTodo },
+		{ href: '/activity', label: 'Activity', icon: Activity },
 		{ href: '/team', label: 'Team', icon: Users },
 		{ href: '/settings', label: 'Settings', icon: Settings }
 	] as const;

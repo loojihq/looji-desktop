@@ -20,6 +20,7 @@
 	let query = $state('');
 	let statusFilter = $state<'all' | ProjectStatus>('all');
 	let deleteTarget = $state<Project | null>(null);
+	let deleteError = $state('');
 
 	let formOpen = $state(false);
 	let editTarget = $state<Project | null>(null);
@@ -94,8 +95,12 @@
 
 	async function handleDelete() {
 		if (!deleteTarget) return;
-		await deleteProject(deleteTarget.id);
-		deleteTarget = null;
+		try {
+			await deleteProject(deleteTarget.id);
+			deleteTarget = null;
+		} catch (err) {
+			deleteError = err instanceof Error ? err.message : String(err);
+		}
 	}
 </script>
 
@@ -209,8 +214,8 @@
 				type="button"
 				onclick={() => (statusFilter = tab.value)}
 				class="rounded-lg px-3 py-1.5 text-sm font-medium transition-colors {statusFilter === tab.value
-					? 'bg-neutral-900 text-white'
-					: 'border border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-50'}"
+					? 'bg-foreground text-background'
+					: 'border border-neutral-200 bg-surface text-neutral-600 hover:bg-neutral-50'}"
 			>
 				{tab.label}
 				<span class="ml-1.5 text-xs text-neutral-400">{tab.count}</span>
@@ -330,6 +335,22 @@
 		{/if}
 	{/each}
 </div>
+
+{#if deleteError}
+	<div
+		class="mb-4 flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700"
+	>
+		<p>{deleteError}</p>
+		<button
+			type="button"
+			class="shrink-0 rounded-md p-1 text-red-400 hover:bg-red-100 hover:text-red-700"
+			aria-label="Dismiss"
+			onclick={() => (deleteError = '')}
+		>
+			<X size={14} />
+		</button>
+	</div>
+{/if}
 
 <ConfirmDialog
 	open={deleteTarget !== null}

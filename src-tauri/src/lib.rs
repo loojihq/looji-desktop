@@ -68,6 +68,47 @@ pub fn run() {
             )",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 6,
+            description: "create_settings",
+            sql: "CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 7,
+            description: "create_audit_log",
+            sql: "CREATE TABLE IF NOT EXISTS audit_log (
+                id TEXT PRIMARY KEY,
+                entity_type TEXT NOT NULL,
+                entity_id TEXT NOT NULL,
+                action TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                details TEXT NOT NULL DEFAULT '{}',
+                time TEXT NOT NULL
+            )",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 8,
+            description: "migrate_activities_to_audit_log",
+            sql: "INSERT INTO audit_log (id, entity_type, entity_id, action, summary, details, time) SELECT id, 'activity', '', action, target, '{}', time FROM activities",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 9,
+            description: "drop_activities",
+            sql: "DROP TABLE activities",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 10,
+            description: "add_tasks_updated_at",
+            sql: "ALTER TABLE tasks ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''",
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()

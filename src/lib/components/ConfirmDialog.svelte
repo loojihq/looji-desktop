@@ -29,7 +29,7 @@
 
 {#if open}
 	<div class="fixed inset-0 z-50 flex items-center justify-center p-4">
-		<div class="absolute inset-0 bg-neutral-900/50" role="presentation" onclick={onCancel}></div>
+		<div class="absolute inset-0 bg-overlay" role="presentation" onclick={onCancel}></div>
 		<div
 			class="relative w-full max-w-sm rounded-xl bg-white p-5 shadow-xl"
 			role="alertdialog"
