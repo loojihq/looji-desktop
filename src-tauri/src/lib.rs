@@ -109,10 +109,23 @@ pub fn run() {
             sql: "ALTER TABLE tasks ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 11,
+            description: "add_projects_spec",
+            sql: "ALTER TABLE projects ADD COLUMN spec TEXT NOT NULL DEFAULT ''",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 12,
+            description: "add_projects_user_stories",
+            sql: "ALTER TABLE projects ADD COLUMN user_stories TEXT NOT NULL DEFAULT '[]'",
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_http::init())
         .plugin(
             tauri_plugin_sql::Builder::default()
                 .add_migrations("sqlite:workmaster.db", migrations)

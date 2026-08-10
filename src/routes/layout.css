@@ -107,6 +107,10 @@
 	background-color: #dc2626;
 }
 
+.dark .bg-emerald-600 {
+	background-color: #059669;
+}
+
 /* Selection uses the inverted indigo ramp so it stays legible in dark mode */
 .dark ::selection {
 	background-color: var(--color-indigo-700);

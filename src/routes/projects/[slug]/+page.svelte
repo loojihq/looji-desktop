@@ -2,11 +2,12 @@
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { ArrowLeft, CalendarDays, Pencil, Plus, Trash2, User, X } from '@lucide/svelte';
+	import { ArrowLeft, CalendarDays, Pencil, Plus, Sparkles, Trash2, User, X } from '@lucide/svelte';
 	import Avatar from '$lib/components/Avatar.svelte';
 	import Badge from '$lib/components/Badge.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import ProgressBar from '$lib/components/ProgressBar.svelte';
+	import { generateAiDraft, suggestSpecialties } from '$lib/ai';
 	import { projectAccents, priorityStyles, projectStatusStyles, taskStatusStyles } from '$lib/badges';
 	import {
 		canTransition,
@@ -18,6 +19,8 @@
 		moveTask,
 		projectProgress,
 		projects,
+		publishAiDraft,
+		settings,
 		tasks,
 		taskTransitions,
 		updateProject,
@@ -27,6 +30,7 @@
 		priorities,
 		projectStatuses,
 		taskStatuses,
+		type AiDraft,
 		type Member,
 		type Priority,
 		type ProjectStatus,
@@ -104,6 +108,116 @@
 	let editDue = $state('');
 	let editTags = $state('');
 	let editError = $state('');
+
+	let aiOpen = $state(false);
+	let aiDesires = $state('');
+	let aiDue = $state('');
+	let aiSpecialties = $state<string[]>([]);
+	let aiSuggesting = $state(false);
+	let aiIncluded = $state<Record<string, boolean>>({});
+	let aiSpecialty = $state<Record<string, string>>({});
+	let aiLoading = $state(false);
+	let aiPublishing = $state(false);
+	let aiError = $state('');
+	let aiDraft = $state<AiDraft | null>(null);
+	let aiPublished = $state(false);
+	let aiNeedsKey = $state(false);
+
+	function openAiPanel() {
+		if (!project) return;
+		aiOpen = true;
+		aiPublished = false;
+		aiDraft = null;
+		aiError = '';
+		aiNeedsKey = !settings.aiApiKey;
+		aiDue = project.due.slice(0, 10);
+		aiIncluded = Object.fromEntries(projectMembers.map((m) => [m.id, true]));
+		aiSpecialty = Object.fromEntries(projectMembers.map((m) => [m.id, '']));
+		if (!aiNeedsKey) suggestSpecialtiesNow();
+	}
+
+	function closeAiPanel() {
+		aiOpen = false;
+		aiDraft = null;
+		aiError = '';
+		aiPublished = false;
+	}
+
+	async function suggestSpecialtiesNow() {
+		if (!project || !settings.aiApiKey) return;
+		aiSuggesting = true;
+		aiError = '';
+		try {
+			aiSpecialties = await suggestSpecialties(
+				project.name,
+				project.description,
+				settings.aiApiKey,
+				settings.aiModel
+			);
+		} catch (err) {
+			aiError = err instanceof Error ? err.message : String(err);
+		} finally {
+			aiSuggesting = false;
+		}
+	}
+
+	async function handleAiGenerate() {
+		if (!project) return;
+		if (!settings.aiApiKey) {
+			aiNeedsKey = true;
+			return;
+		}
+		if (!aiDesires.trim()) {
+			aiError = 'Describe what you want to build first.';
+			return;
+		}
+		aiLoading = true;
+		aiError = '';
+		aiPublished = false;
+		try {
+			const selected = projectMembers.filter((m) => aiIncluded[m.id]);
+			const draft = await generateAiDraft({
+				projectName: project.name,
+				projectDescription: project.description,
+				desires: aiDesires.trim(),
+				dueDate: aiDue ? new Date(`${aiDue}T12:00:00`).toISOString() : project.due,
+				members: selected.map((m) => ({ name: m.name, specialty: aiSpecialty[m.id] ?? '' })),
+				existingTitles: tasks.filter((t) => t.projectId === project.id).map((t) => t.title),
+				apiKey: settings.aiApiKey,
+				model: settings.aiModel
+			});
+			if (draft.tasks.length === 0 && !draft.spec && draft.userStories.length === 0) {
+				aiError = 'The AI returned an empty plan. Try rephrasing your desires.';
+			} else {
+				aiDraft = draft;
+			}
+		} catch (err) {
+			aiError = err instanceof Error ? err.message : String(err);
+		} finally {
+			aiLoading = false;
+		}
+	}
+
+	async function handleAiPublish() {
+		if (!project || !aiDraft) return;
+		aiPublishing = true;
+		aiError = '';
+		try {
+			const assignments: Record<string, string | null> = {};
+			for (const m of projectMembers) {
+				if (aiIncluded[m.id]) assignments[m.name] = m.id;
+			}
+			const due = aiDue ? new Date(`${aiDue}T12:00:00`).toISOString() : project.due;
+			await publishAiDraft(project.id, aiDraft, due, assignments);
+			aiPublished = true;
+			aiDraft = null;
+			aiDesires = '';
+		} catch (err) {
+			aiError = err instanceof Error ? err.message : String(err);
+		} finally {
+			aiPublishing = false;
+		}
+	}
 
 	function openProjectEdit() {
 		if (!project) return;
@@ -248,6 +362,14 @@
 				<p class="mt-2 max-w-2xl text-sm text-neutral-500">{project.description}</p>
 			</div>
 			<div class="flex items-center gap-2">
+				<button
+					type="button"
+					class="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-indigo-500"
+					onclick={openAiPanel}
+				>
+					<Sparkles size={15} />
+					Generate with AI
+				</button>
 				<span
 					class="inline-flex items-center gap-1.5 rounded-lg bg-neutral-100 px-3 py-1.5 text-sm font-medium text-neutral-600"
 				>
@@ -486,6 +608,211 @@
 		</form>
 	{/if}
 
+	{#if aiOpen}
+		<section class="mt-6 rounded-xl border border-indigo-200 bg-indigo-50/60 p-4 shadow-xs">
+			<header class="flex items-start justify-between gap-3">
+				<div>
+					<h2 class="font-semibold tracking-tight text-neutral-900">Generate with AI</h2>
+					<p class="mt-0.5 text-sm text-neutral-500">
+						Describe what you want, pick the team, and the AI drafts a spec, user stories and
+						tasks.
+					</p>
+				</div>
+				<button
+					type="button"
+					class="rounded-lg p-1.5 text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-700"
+					aria-label="Close AI generator"
+					onclick={closeAiPanel}
+				>
+					<X size={16} />
+				</button>
+			</header>
+
+			{#if aiNeedsKey}
+				<div
+					class="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700"
+				>
+					Add your DeepSeek API key in{' '}
+					<a href={resolve('/settings')} class="font-medium underline">Settings → AI</a> to use
+					the AI generator.
+				</div>
+			{:else}
+				<div class="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-[1fr_auto]">
+					<div>
+						<label for="ai-desires" class="mb-1 block text-xs font-medium text-neutral-600">
+							What do you want to build?
+						</label>
+						<textarea
+							id="ai-desires"
+							rows={3}
+							placeholder="e.g. A mobile app where users can track their daily habits, set reminders, and see weekly streaks…"
+							class="w-full rounded-lg border-neutral-300 bg-surface text-sm focus:border-indigo-500 focus:ring-indigo-500"
+							bind:value={aiDesires}
+						></textarea>
+					</div>
+					<div>
+						<label for="ai-due" class="mb-1 block text-xs font-medium text-neutral-600">
+							Target date
+						</label>
+						<input
+							id="ai-due"
+							type="date"
+							class="w-full rounded-lg border-neutral-300 bg-surface text-sm focus:border-indigo-500 focus:ring-indigo-500"
+							bind:value={aiDue}
+						/>
+					</div>
+				</div>
+
+				<div class="mt-4">
+					<div class="mb-1.5 flex items-center justify-between gap-3">
+						<p class="text-xs font-medium text-neutral-600">Team &amp; specialties</p>
+						<button
+							type="button"
+							class="text-xs font-medium text-indigo-600 hover:text-indigo-700 disabled:opacity-50"
+							onclick={suggestSpecialtiesNow}
+							disabled={aiSuggesting}
+						>
+							{aiSuggesting
+								? 'Suggesting…'
+								: aiSpecialties.length > 0
+									? 'Re-suggest specialties'
+									: 'Suggest specialties from description'}
+						</button>
+					</div>
+					{#if projectMembers.length === 0}
+						<p
+							class="rounded-lg border border-dashed border-neutral-300 bg-surface/60 px-3 py-2.5 text-sm text-neutral-500"
+						>
+							No team members yet — generated tasks will be unassigned. Add members on the
+							Team page.
+						</p>
+					{:else}
+						<div class="space-y-1.5">
+							{#each projectMembers as member (member.id)}
+								<div
+									class="flex flex-wrap items-center gap-2 rounded-lg border border-neutral-200 bg-surface px-3 py-2"
+								>
+									<input
+										type="checkbox"
+										class="size-4 shrink-0 rounded border-neutral-300 text-indigo-600 focus:ring-indigo-500"
+										checked={aiIncluded[member.id]}
+										onchange={() => (aiIncluded[member.id] = !aiIncluded[member.id])}
+										aria-label="Include {member.name}"
+									/>
+									<Avatar member={member} size="sm" />
+									<span class="w-36 truncate text-sm font-medium text-neutral-800">
+										{member.name}
+									</span>
+									<input
+										type="text"
+										list="ai-specialties"
+										placeholder="Specialty (optional)"
+										class="w-full min-w-40 flex-1 rounded-lg border-neutral-300 bg-surface px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:opacity-40"
+										bind:value={aiSpecialty[member.id]}
+										disabled={!aiIncluded[member.id]}
+									/>
+								</div>
+							{/each}
+						</div>
+						<datalist id="ai-specialties">
+							{#each aiSpecialties as s (s)}
+								<option value={s}></option>
+							{/each}
+						</datalist>
+					{/if}
+				</div>
+
+				<div class="mt-4 flex items-center gap-2">
+					<button
+						type="button"
+						class="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
+						onclick={handleAiGenerate}
+						disabled={aiLoading || aiPublishing}
+					>
+						<Sparkles size={15} />
+						{aiLoading ? 'Generating…' : 'Generate plan'}
+					</button>
+					{#if aiDraft && aiDraft.tasks.length > 0}
+						<button
+							type="button"
+							class="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+							onclick={handleAiPublish}
+							disabled={aiPublishing}
+						>
+							{aiPublishing ? 'Publishing…' : 'Publish to backlog'}
+						</button>
+					{/if}
+				</div>
+			{/if}
+
+			{#if aiError}
+				<p class="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{aiError}</p>
+			{/if}
+
+			{#if aiPublished}
+				<p class="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+					Published — the tasks are now in the Backlog column, and the spec &amp; user stories are
+					saved below.
+				</p>
+			{/if}
+
+			{#if aiDraft}
+				<div class="mt-5 space-y-4 border-t border-indigo-200/70 pt-4">
+					{#if aiDraft.spec}
+						<div>
+							<h3
+								class="text-xs font-semibold tracking-wider text-neutral-500 uppercase"
+							>
+								Spec
+							</h3>
+							<p class="mt-1 text-sm whitespace-pre-line text-neutral-700">{aiDraft.spec}</p>
+						</div>
+					{/if}
+					{#if aiDraft.userStories.length > 0}
+						<div>
+							<h3
+								class="text-xs font-semibold tracking-wider text-neutral-500 uppercase"
+							>
+								User stories
+							</h3>
+							<ul class="mt-1 space-y-1">
+								{#each aiDraft.userStories as story (story)}
+									<li class="flex gap-1.5 text-sm text-neutral-600">
+										<span class="text-indigo-500">•</span>
+										<span>{story}</span>
+									</li>
+								{/each}
+							</ul>
+						</div>
+					{/if}
+					<div>
+						<h3
+							class="text-xs font-semibold tracking-wider text-neutral-500 uppercase"
+						>
+							Tasks ({aiDraft.tasks.length})
+						</h3>
+						<ul class="mt-1 divide-y divide-neutral-100">
+							{#each aiDraft.tasks as task (task.title)}
+								<li class="flex items-start gap-2 py-2">
+									<div class="min-w-0 flex-1">
+										<p class="text-sm font-medium text-neutral-800">{task.title}</p>
+										{#if task.description}
+											<p class="mt-0.5 text-xs text-neutral-500">{task.description}</p>
+										{/if}
+									</div>
+									<Badge variant="priority" value={task.priority} />
+									{#if task.assignee}
+										<span class="shrink-0 text-xs text-neutral-500">{task.assignee}</span>
+									{/if}
+								</li>
+							{/each}
+						</ul>
+					</div>
+				</div>
+			{/if}
+		</section>
+	{/if}
+
 	<section class="mt-6">
 		{#if dropError}
 			<div class="mb-4 flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
@@ -645,6 +972,35 @@
 			{/each}
 		</div>
 	</section>
+
+	{#if project?.spec || (project?.userStories?.length ?? 0) > 0}
+		<section class="mt-6 rounded-xl border border-neutral-200 bg-surface p-5 shadow-xs">
+			<h2 class="font-semibold tracking-tight text-neutral-900">Project plan</h2>
+			{#if project.spec}
+				<div class="mt-3">
+					<h3 class="text-xs font-semibold tracking-wider text-neutral-500 uppercase">
+						Spec
+					</h3>
+					<p class="mt-1 text-sm whitespace-pre-line text-neutral-700">{project.spec}</p>
+				</div>
+			{/if}
+			{#if project.userStories.length > 0}
+				<div class="mt-4">
+					<h3 class="text-xs font-semibold tracking-wider text-neutral-500 uppercase">
+						User stories
+					</h3>
+					<ul class="mt-1 space-y-1">
+						{#each project.userStories as story (story)}
+							<li class="flex gap-1.5 text-sm text-neutral-600">
+								<span class="text-indigo-500">•</span>
+								<span>{story}</span>
+							</li>
+						{/each}
+					</ul>
+				</div>
+			{/if}
+		</section>
+	{/if}
 {/if}
 
 <ConfirmDialog

@@ -19,6 +19,8 @@ export type Project = {
 	due: string;
 	color: string;
 	memberIds: string[];
+	spec: string;
+	userStories: string[];
 };
 
 export type TaskStatus = 'backlog' | 'todo' | 'in_progress' | 'in_review' | 'done';
@@ -56,6 +58,22 @@ export type Settings = {
 	notifProduct: boolean;
 	workspaceName: string;
 	timezone: string;
+	aiApiKey: string;
+	aiModel: string;
+};
+
+export type AiDraftTask = {
+	title: string;
+	description: string;
+	priority: Priority;
+	tags: string[];
+	assignee?: string;
+};
+
+export type AiDraft = {
+	spec: string;
+	userStories: string[];
+	tasks: AiDraftTask[];
 };
 
 export type EntityType = 'project' | 'task' | 'member' | 'settings' | 'activity';

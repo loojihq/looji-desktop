@@ -1,6 +1,7 @@
 import Database from '@tauri-apps/plugin-sql';
 import { avatarColors, taskStatusStyles } from './badges';
 import type {
+	AiDraft,
 	AuditEntry,
 	Member,
 	Priority,
@@ -30,6 +31,8 @@ type ProjectRow = {
 	progress: number;
 	due: string;
 	color: string;
+	spec: string;
+	user_stories: string;
 };
 
 type ProjectMemberRow = { project_id: string; member_id: string };
@@ -135,7 +138,9 @@ export const settings = $state<Settings>({
 	notifMentions: true,
 	notifProduct: false,
 	workspaceName: 'Workmaster',
-	timezone: 'America/Los_Angeles'
+	timezone: 'America/Los_Angeles',
+	aiApiKey: '',
+	aiModel: 'deepseek-chat'
 });
 
 function requireDb(): Database {
@@ -163,6 +168,12 @@ function memberFromRow(row: MemberRow): Member {
 }
 
 function projectFromRow(row: ProjectRow, memberIds: string[]): Project {
+	let userStories: string[] = [];
+	try {
+		userStories = JSON.parse(row.user_stories) as string[];
+	} catch {
+		userStories = [];
+	}
 	return {
 		id: row.id,
 		slug: row.slug,
@@ -172,7 +183,9 @@ function projectFromRow(row: ProjectRow, memberIds: string[]): Project {
 		progress: row.progress,
 		due: row.due,
 		color: row.color,
-		memberIds
+		memberIds,
+		spec: row.spec ?? '',
+		userStories
 	};
 }
 
@@ -442,7 +455,9 @@ export async function createProject(input: {
 		progress: 0,
 		due: input.due ?? daysFromNow(30),
 		color: 'indigo',
-		memberIds: []
+		memberIds: [],
+		spec: '',
+		userStories: []
 	};
 	await database.execute(
 		'INSERT INTO projects (id, slug, name, description, status, progress, due, color) VALUES (?, ?, ?, ?, ?, 0, ?, ?)',
@@ -701,4 +716,50 @@ export async function runAutomations(): Promise<void> {
 	} catch (err) {
 		console.error('Automation run failed', err);
 	}
+}
+
+/**
+ * Persists an AI-generated draft: saves the spec/user stories on the project
+ * and creates each generated task in the backlog. Returns the number of tasks
+ * created. `assignments` maps member names to member ids.
+ */
+export async function publishAiDraft(
+	projectId: string,
+	draft: AiDraft,
+	due: string,
+	assignments: Record<string, string | null>
+): Promise<number> {
+	const project = projects.find((p) => p.id === projectId);
+	if (!project) return 0;
+	const database = requireDb();
+	await database.execute('UPDATE projects SET spec = ?, user_stories = ? WHERE id = ?', [
+		draft.spec,
+		JSON.stringify(draft.userStories),
+		projectId
+	]);
+	project.spec = draft.spec;
+	project.userStories = draft.userStories;
+
+	let count = 0;
+	for (const task of draft.tasks) {
+		if (!task.title.trim()) continue;
+		await createTask({
+			title: task.title,
+			projectId,
+			status: 'backlog',
+			priority: task.priority,
+			assigneeId: task.assignee ? (assignments[task.assignee] ?? null) : null,
+			due,
+			tags: task.tags
+		});
+		count++;
+	}
+	await logAudit(
+		'project',
+		projectId,
+		'updated',
+		`Published AI-generated plan for "${project.name}" (${count} task${count === 1 ? '' : 's'})`,
+		{ ai: { from: null, to: `spec + ${draft.userStories.length} stories + ${count} tasks` } }
+	);
+	return count;
 }

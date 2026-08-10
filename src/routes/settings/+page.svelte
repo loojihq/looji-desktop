@@ -1,10 +1,63 @@
 <script lang="ts">
 	import { Trash2 } from '@lucide/svelte';
+	import { fetchDeepSeekModels, testDeepSeekConnection } from '$lib/ai';
 	import { settings, updateSetting } from '$lib/store.svelte';
 
 	let section = $state('Appearance');
 
-	const sections = ['Appearance', 'Notifications', 'Workspace'];
+	const sections = ['Appearance', 'AI', 'Notifications', 'Workspace'];
+
+	let aiTesting = $state(false);
+	let aiTestResult = $state<string | null>(null);
+	let aiTestOk = $state(false);
+	let aiModels = $state<string[]>([]);
+	let aiModelsLoaded = $state(false);
+	let aiLoadingModels = $state(false);
+	let aiModelsError = $state('');
+
+	async function loadModels() {
+		if (!settings.aiApiKey) return;
+		aiLoadingModels = true;
+		aiModelsError = '';
+		try {
+			aiModels = await fetchDeepSeekModels(settings.aiApiKey);
+			aiModelsLoaded = true;
+		} catch (err) {
+			aiModelsError = err instanceof Error ? err.message : String(err);
+		} finally {
+			aiLoadingModels = false;
+		}
+	}
+
+	$effect(() => {
+		if (section === 'AI' && settings.aiApiKey && !aiModelsLoaded && !aiLoadingModels) {
+			loadModels();
+		}
+	});
+
+	async function testAi() {
+		if (!settings.aiApiKey) return;
+		aiTesting = true;
+		aiTestResult = null;
+		try {
+			await testDeepSeekConnection(settings.aiApiKey, settings.aiModel);
+			aiTestOk = true;
+			aiTestResult = 'Connected — your DeepSeek key works.';
+			await loadModels();
+		} catch (err) {
+			aiTestOk = false;
+			aiTestResult = err instanceof Error ? err.message : String(err);
+		} finally {
+			aiTesting = false;
+		}
+	}
+
+	function handleKeyChange() {
+		updateSetting('aiApiKey', settings.aiApiKey);
+		aiModelsLoaded = false;
+		aiModels = [];
+		aiModelsError = '';
+	}
 
 	const themes = [
 		{ value: 'light', label: 'Light' },
@@ -79,6 +132,77 @@
 						)}
 					</div>
 				</div>
+			</section>
+		{:else if section === 'AI'}
+			<section class="rounded-xl border border-neutral-200 bg-surface p-6 shadow-xs">
+				<h2 class="font-semibold tracking-tight text-neutral-900">AI assistant</h2>
+				<p class="mt-1 text-sm text-neutral-500">
+					Connect a DeepSeek API key to generate project plans, specs and tasks.
+				</p>
+
+				<div class="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
+					<div class="sm:col-span-2">
+						<label for="ai-key" class="mb-1 block text-xs font-medium text-neutral-600">
+							DeepSeek API key
+						</label>
+						<input
+							id="ai-key"
+							type="password"
+							autocomplete="off"
+							placeholder="sk-…"
+							class="w-full rounded-lg border-neutral-300 bg-surface text-sm focus:border-indigo-500 focus:ring-indigo-500"
+							bind:value={settings.aiApiKey}
+							onchange={handleKeyChange}
+						/>
+						<p class="mt-1 text-xs text-neutral-400">
+							Stored locally on this device and only used to talk to DeepSeek.
+						</p>
+					</div>
+					<div>
+						<label for="ai-model" class="mb-1 block text-xs font-medium text-neutral-600">Model</label>
+						<select
+							id="ai-model"
+							class="w-full rounded-lg border-neutral-300 bg-surface text-sm focus:border-indigo-500 focus:ring-indigo-500"
+							bind:value={settings.aiModel}
+							onchange={() => updateSetting('aiModel', settings.aiModel)}
+						>
+							{#if aiModels.length > 0}
+								{#each aiModels as m (m)}
+									<option value={m}>{m}</option>
+								{/each}
+							{:else}
+								<option value="deepseek-chat">deepseek-chat</option>
+								<option value="deepseek-reasoner">deepseek-reasoner</option>
+							{/if}
+						</select>
+						<p class="mt-1 text-xs text-neutral-400">
+							{aiLoadingModels
+								? 'Loading available models…'
+								: aiModelsLoaded
+									? `${aiModels.length} model${aiModels.length === 1 ? '' : 's'} available`
+									: aiModelsError || 'Available models load once the key is validated.'}
+						</p>
+					</div>
+					<div class="flex items-end">
+						<button
+							type="button"
+							class="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-surface px-3 py-2 text-sm font-medium text-neutral-600 transition-colors hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
+							onclick={testAi}
+							disabled={aiTesting || !settings.aiApiKey}
+						>
+							{aiTesting ? 'Testing…' : 'Test connection'}
+						</button>
+					</div>
+				</div>
+				{#if aiTestResult !== null}
+					<p
+						class="mt-3 rounded-lg px-3 py-2 text-sm {aiTestOk
+							? 'bg-emerald-50 text-emerald-700'
+							: 'bg-red-50 text-red-700'}"
+					>
+						{aiTestResult}
+					</p>
+				{/if}
 			</section>
 		{:else if section === 'Notifications'}
 			<section class="rounded-xl border border-neutral-200 bg-surface shadow-xs">
