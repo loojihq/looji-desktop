@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import {
 		ArrowRight,
 		CalendarDays,
@@ -6,17 +7,16 @@
 		FolderKanban,
 		ListChecks,
 		Plus,
+		User,
 		Users
 	} from '@lucide/svelte';
 	import Avatar from '$lib/components/Avatar.svelte';
 	import Badge from '$lib/components/Badge.svelte';
 	import ProgressBar from '$lib/components/ProgressBar.svelte';
 	import { projectAccents } from '$lib/badges';
-	import { resolve } from '$app/paths';
 	import {
 		activities,
 		createTask,
-		getCurrentUser,
 		memberById,
 		members,
 		projectById,
@@ -26,13 +26,16 @@
 	} from '$lib/store.svelte';
 	import { daysFromNow, dueLabel, formatDateLong, isOverdue, relativeTime } from '$lib/utils';
 
-	const currentUser = $derived(getCurrentUser());
-
 	const hour = new Date().getHours();
 	const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
 
 	let addingTask = $state(false);
 	let quickTitle = $state('');
+	let quickProjectId = $state('');
+
+	$effect(() => {
+		if (!quickProjectId && projects[0]) quickProjectId = projects[0].id;
+	});
 
 	const activeProjectCount = $derived(
 		projects.filter((project) => project.status === 'active').length
@@ -51,18 +54,18 @@
 	);
 	const doneTaskCount = $derived(tasks.filter((task) => task.status === 'done').length);
 	const onlineMemberCount = $derived(members.filter((member) => member.online).length);
-	const myTasks = $derived(
+	const openTasks = $derived(
 		[...tasks]
-			.filter((task) => task.assigneeId === currentUser.id && task.status !== 'done')
+			.filter((task) => task.status !== 'done')
 			.sort((a, b) => new Date(a.due).getTime() - new Date(b.due).getTime())
 	);
 	const topProjects = $derived([...projects].sort((a, b) => b.progress - a.progress).slice(0, 4));
 
 	function handleQuickAdd() {
-		if (!quickTitle.trim()) return;
+		if (!quickTitle.trim() || !quickProjectId) return;
 		createTask({
 			title: quickTitle.trim(),
-			projectId: 'p1',
+			projectId: quickProjectId,
 			status: 'todo',
 			priority: 'medium',
 			due: daysFromNow(3)
@@ -78,22 +81,37 @@
 
 <div class="mb-8 flex flex-wrap items-end justify-between gap-4">
 	<div>
-		<h1 class="text-2xl font-semibold tracking-tight text-neutral-900 sm:text-3xl">
-			{greeting}, {currentUser.name.split(' ')[0]}
-		</h1>
+		<h1 class="text-2xl font-semibold tracking-tight text-neutral-900 sm:text-3xl">{greeting}</h1>
 		<p class="mt-1 text-sm text-neutral-500">
-			{formatDateLong(new Date())} · Here's what's happening across your workspace.
+			{formatDateLong(new Date())} · Here's what's happening in your workspace.
 		</p>
 	</div>
-	{#if addingTask}
-		<form class="flex items-center gap-2" onsubmit={handleQuickAdd}>
+	{#if projects.length === 0}
+		<a
+			href={resolve('/projects')}
+			class="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-indigo-500"
+		>
+			<Plus size={16} strokeWidth={2.5} />
+			Create a project
+		</a>
+	{:else if addingTask}
+		<form class="flex flex-wrap items-center gap-2" onsubmit={handleQuickAdd}>
 			<input
 				type="text"
 				placeholder="Task title"
-				class="w-56 rounded-lg border-neutral-300 text-sm focus:border-indigo-500 focus:ring-indigo-500"
+				class="w-52 rounded-lg border-neutral-300 text-sm focus:border-indigo-500 focus:ring-indigo-500"
 				bind:value={quickTitle}
 				required
 			/>
+			<select
+				class="rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
+				bind:value={quickProjectId}
+				aria-label="Project"
+			>
+				{#each projects as project (project.id)}
+					<option value={project.id}>{project.name}</option>
+				{/each}
+			</select>
 			<button
 				type="submit"
 				class="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500"
@@ -137,9 +155,7 @@
 	<div class="rounded-xl border border-neutral-200 bg-white p-5 shadow-xs">
 		<div class="flex items-center justify-between">
 			<p class="text-sm font-medium text-neutral-500">Completed tasks</p>
-			<span
-				class="flex size-9 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600"
-			>
+			<span class="flex size-9 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
 				<CheckCircle size={18} />
 			</span>
 		</div>
@@ -162,9 +178,9 @@
 	<section class="rounded-xl border border-neutral-200 bg-white shadow-xs xl:col-span-2">
 		<header class="flex items-center justify-between border-b border-neutral-200 px-5 py-4">
 			<div class="flex items-center gap-2">
-				<h2 class="font-semibold tracking-tight text-neutral-900">My tasks</h2>
+				<h2 class="font-semibold tracking-tight text-neutral-900">Open tasks</h2>
 				<span class="rounded-full bg-neutral-100 px-2 py-0.5 text-xs font-medium text-neutral-500">
-					{myTasks.length}
+					{openTasks.length}
 				</span>
 			</div>
 			<a
@@ -176,7 +192,7 @@
 			</a>
 		</header>
 		<ul class="divide-y divide-neutral-100">
-			{#each myTasks as task (task.id)}
+			{#each openTasks as task (task.id)}
 				{@const project = projectById(task.projectId)}
 				<li class="flex items-center gap-3 px-5 py-3">
 					<input
@@ -188,16 +204,15 @@
 					/>
 					<div class="min-w-0 flex-1">
 						<p class="truncate text-sm font-medium text-neutral-800">{task.title}</p>
-						<p
-							class="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-neutral-400"
-						>
-							<span class="inline-flex items-center gap-1.5">
-								<span
-									class="size-1.5 rounded-full {projectAccents[project.color]?.chip ??
-										'bg-neutral-400'}"
-								></span>
-								{project.name}
-							</span>
+						<p class="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-neutral-400">
+							{#if project}
+								<span class="inline-flex items-center gap-1.5">
+									<span
+										class="size-1.5 rounded-full {projectAccents[project.color]?.chip ?? 'bg-neutral-400'}"
+									></span>
+									{project.name}
+								</span>
+							{/if}
 							<span class="text-neutral-300">·</span>
 							<span
 								class={isOverdue(task.due)
@@ -215,7 +230,11 @@
 				</li>
 			{:else}
 				<li class="px-5 py-12 text-center text-sm text-neutral-400">
-					No open tasks assigned to you. Enjoy the quiet.
+					{#if projects.length === 0}
+						No tasks yet. Create a project to get started.
+					{:else}
+						No open tasks. Enjoy the quiet.
+					{/if}
 				</li>
 			{/each}
 		</ul>
@@ -233,47 +252,67 @@
 					<ArrowRight size={14} />
 				</a>
 			</header>
-			<ul class="space-y-4 px-5 py-4">
-				{#each topProjects as project (project.id)}
-					<li>
-						<div class="mb-1.5 flex items-center justify-between text-sm">
-							<a
-								href={resolve(`/projects/${project.slug}`)}
-								class="font-medium text-neutral-800 hover:text-indigo-600"
-							>
-								{project.name}
-							</a>
-							<span class="text-xs font-medium text-neutral-400">{project.progress}%</span>
-						</div>
-						<ProgressBar
-							value={project.progress}
-							color={projectAccents[project.color]?.bar ?? 'bg-indigo-500'}
-						/>
-					</li>
-				{/each}
-			</ul>
+			{#if topProjects.length === 0}
+				<p class="px-5 py-8 text-center text-sm text-neutral-400">
+					No projects yet. Create one to see progress here.
+				</p>
+			{:else}
+				<ul class="space-y-4 px-5 py-4">
+					{#each topProjects as project (project.id)}
+						<li>
+							<div class="mb-1.5 flex items-center justify-between text-sm">
+								<a
+									href={resolve(`/projects/${project.slug}`)}
+									class="font-medium text-neutral-800 hover:text-indigo-600"
+								>
+									{project.name}
+								</a>
+								<span class="text-xs font-medium text-neutral-400">{project.progress}%</span>
+							</div>
+							<ProgressBar
+								value={project.progress}
+								color={projectAccents[project.color]?.bar ?? 'bg-indigo-500'}
+							/>
+						</li>
+					{/each}
+				</ul>
+			{/if}
 		</section>
 
 		<section class="rounded-xl border border-neutral-200 bg-white shadow-xs">
 			<header class="border-b border-neutral-200 px-5 py-4">
 				<h2 class="font-semibold tracking-tight text-neutral-900">Recent activity</h2>
 			</header>
-			<ul class="divide-y divide-neutral-100 px-5 py-2">
-				{#each activities.slice(0, 6) as activity (activity.id)}
-					{@const actor = memberById(activity.memberId)}
-					<li class="flex gap-3 py-3">
-						<Avatar member={actor} size="sm" />
-						<div class="min-w-0 text-sm">
-							<p class="text-neutral-600">
-								<span class="font-medium text-neutral-900">{actor.name}</span>
-								{activity.action}
-								<span class="font-medium text-neutral-900">{activity.target}</span>
-							</p>
-							<p class="mt-0.5 text-xs text-neutral-400">{relativeTime(activity.time)}</p>
-						</div>
-					</li>
-				{/each}
-			</ul>
+			{#if activities.length === 0}
+				<p class="px-5 py-8 text-center text-sm text-neutral-400">
+					No activity yet. Changes will show up here.
+				</p>
+			{:else}
+				<ul class="divide-y divide-neutral-100 px-5 py-2">
+					{#each activities.slice(0, 6) as activity (activity.id)}
+						{@const actor = memberById(activity.memberId)}
+						<li class="flex gap-3 py-3">
+							{#if actor}
+								<Avatar member={actor} size="sm" />
+							{:else}
+								<span
+									class="flex size-6 shrink-0 items-center justify-center rounded-full bg-neutral-200 text-neutral-500"
+								>
+									<User size={12} />
+								</span>
+							{/if}
+							<div class="min-w-0 text-sm">
+								<p class="text-neutral-600">
+									<span class="font-medium text-neutral-900">{actor ? actor.name : 'You'}</span>
+									{activity.action}
+									<span class="font-medium text-neutral-900">{activity.target}</span>
+								</p>
+								<p class="mt-0.5 text-xs text-neutral-400">{relativeTime(activity.time)}</p>
+							</div>
+						</li>
+					{/each}
+				</ul>
+			{/if}
 		</section>
 	</div>
 </div>

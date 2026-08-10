@@ -29,7 +29,7 @@ export type Task = {
 	id: string;
 	title: string;
 	projectId: string;
-	assigneeId: string;
+	assigneeId: string | null;
 	status: TaskStatus;
 	priority: Priority;
 	due: string;
@@ -38,7 +38,7 @@ export type Task = {
 
 export type Activity = {
 	id: string;
-	memberId: string;
+	memberId: string | null;
 	action: string;
 	target: string;
 	time: string;

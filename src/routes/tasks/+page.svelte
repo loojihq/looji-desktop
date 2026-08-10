@@ -6,6 +6,7 @@
 	import {
 		createTask,
 		memberById,
+		members,
 		projectById,
 		projects,
 		tasks,
@@ -20,8 +21,13 @@
 	let priorityFilter = $state<'all' | Priority>('all');
 
 	let newTitle = $state('');
-	let newProjectId = $state('p1');
+	let newProjectId = $state('');
+	let newAssigneeId = $state('');
 	let newPriority = $state<Priority>('medium');
+
+	$effect(() => {
+		if (!newProjectId && projects[0]) newProjectId = projects[0].id;
+	});
 
 	const filtered = $derived(
 		[...tasks]
@@ -42,12 +48,13 @@
 	const openCount = $derived(tasks.filter((task) => task.status !== 'done').length);
 
 	function handleQuickAdd() {
-		if (!newTitle.trim()) return;
+		if (!newTitle.trim() || !newProjectId) return;
 		createTask({
 			title: newTitle.trim(),
 			projectId: newProjectId,
 			status: 'backlog',
 			priority: newPriority,
+			assigneeId: newAssigneeId || null,
 			due: daysFromNow(7)
 		});
 		newTitle = '';
@@ -94,6 +101,16 @@
 	>
 		{#each priorities as priority (priority)}
 			<option value={priority}>{priorityStyles[priority].label}</option>
+		{/each}
+	</select>
+	<select
+		class="rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
+		bind:value={newAssigneeId}
+		aria-label="Assignee"
+	>
+		<option value="">Unassigned</option>
+		{#each members as member (member.id)}
+			<option value={member.id}>{member.name}</option>
 		{/each}
 	</select>
 	<button
@@ -198,22 +215,30 @@
 							{/if}
 						</td>
 						<td class="px-3 py-3">
-							<a
-								href={resolve(`/projects/${project.slug}`)}
-								class="inline-flex items-center gap-1.5 text-sm text-neutral-500 hover:text-indigo-600"
-							>
-								<span
-									class="size-1.5 rounded-full {projectAccents[project.color]?.chip ??
-										'bg-neutral-400'}"
-								></span>
-								{project.name}
-							</a>
+							{#if project}
+								<a
+									href={resolve(`/projects/${project.slug}`)}
+									class="inline-flex items-center gap-1.5 text-sm text-neutral-500 hover:text-indigo-600"
+								>
+									<span
+										class="size-1.5 rounded-full {projectAccents[project.color]?.chip ??
+											'bg-neutral-400'}"
+									></span>
+									{project.name}
+								</a>
+							{:else}
+								<span class="text-sm text-neutral-400">Unknown project</span>
+							{/if}
 						</td>
 						<td class="px-3 py-3">
-							<div class="flex items-center gap-2">
-								<Avatar member={assignee} size="sm" />
-								<span class="text-sm text-neutral-600">{assignee.name}</span>
-							</div>
+							{#if assignee}
+								<div class="flex items-center gap-2">
+									<Avatar member={assignee} size="sm" />
+									<span class="text-sm text-neutral-600">{assignee.name}</span>
+								</div>
+							{:else}
+								<span class="text-sm text-neutral-400">Unassigned</span>
+							{/if}
 						</td>
 						<td class="px-3 py-3">
 							<Badge variant="priority" value={task.priority} />
@@ -234,7 +259,11 @@
 				{:else}
 					<tr>
 						<td colspan="7" class="px-5 py-16 text-center text-sm text-neutral-400">
-							No tasks match your filters.
+							{#if tasks.length === 0}
+								No tasks yet. Add your first task above.
+							{:else}
+								No tasks match your filters.
+							{/if}
 						</td>
 					</tr>
 				{/each}

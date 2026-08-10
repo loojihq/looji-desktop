@@ -1,463 +1,211 @@
-import { taskStatusStyles } from './badges';
+import Database from '@tauri-apps/plugin-sql';
+import { avatarColors, taskStatusStyles } from './badges';
 import type { Activity, Member, Priority, Project, ProjectStatus, Task, TaskStatus } from './types';
-import { daysFromNow, hoursAgo } from './utils';
+import { daysFromNow } from './utils';
 
-export const currentUserId = 'm1';
+type MemberRow = {
+	id: string;
+	name: string;
+	email: string;
+	role: string;
+	color: string;
+	online: number;
+};
 
-export const members = $state<Member[]>([
-	{
-		id: 'm1',
-		name: 'Alex Morgan',
-		email: 'alex@workmaster.dev',
-		role: 'Product lead',
-		color: 'bg-indigo-500',
-		online: true
-	},
-	{
-		id: 'm2',
-		name: 'Priya Sharma',
-		email: 'priya@workmaster.dev',
-		role: 'Engineering',
-		color: 'bg-sky-500',
-		online: true
-	},
-	{
-		id: 'm3',
-		name: 'Marcus Chen',
-		email: 'marcus@workmaster.dev',
-		role: 'Design',
-		color: 'bg-emerald-500',
-		online: true
-	},
-	{
-		id: 'm4',
-		name: 'Sofia Reyes',
-		email: 'sofia@workmaster.dev',
-		role: 'Engineering',
-		color: 'bg-rose-500',
-		online: false
-	},
-	{
-		id: 'm5',
-		name: 'Jonas Weber',
-		email: 'jonas@workmaster.dev',
-		role: 'Marketing',
-		color: 'bg-amber-500',
-		online: true
-	},
-	{
-		id: 'm6',
-		name: 'Hana Sato',
-		email: 'hana@workmaster.dev',
-		role: 'Operations',
-		color: 'bg-violet-500',
-		online: false
-	}
-]);
+type ProjectRow = {
+	id: string;
+	slug: string;
+	name: string;
+	description: string;
+	status: string;
+	progress: number;
+	due: string;
+	color: string;
+};
 
-export const projects = $state<Project[]>([
-	{
-		id: 'p1',
-		slug: 'workmaster-web',
-		name: 'Workmaster Web',
-		description: 'The new marketing site and documentation for Workmaster.',
-		status: 'active',
-		progress: 72,
-		due: daysFromNow(21),
-		color: 'indigo',
-		memberIds: ['m1', 'm2', 'm3']
-	},
-	{
-		id: 'p2',
-		slug: 'mobile-app',
-		name: 'Mobile App',
-		description: 'iOS and Android companion app, first public beta.',
-		status: 'active',
-		progress: 48,
-		due: daysFromNow(45),
-		color: 'sky',
-		memberIds: ['m1', 'm2', 'm4']
-	},
-	{
-		id: 'p3',
-		slug: 'design-system',
-		name: 'Design System',
-		description: 'Shared tokens, components, and interface guidelines.',
-		status: 'on_hold',
-		progress: 84,
-		due: daysFromNow(12),
-		color: 'violet',
-		memberIds: ['m3']
-	},
-	{
-		id: 'p4',
-		slug: 'billing-v2',
-		name: 'Billing v2',
-		description: 'Invoicing, seats, and usage based pricing.',
-		status: 'planning',
-		progress: 8,
-		due: daysFromNow(60),
-		color: 'amber',
-		memberIds: ['m1', 'm6']
-	},
-	{
-		id: 'p5',
-		slug: 'analytics',
-		name: 'Analytics Dashboard',
-		description: 'Project level reports and team velocity charts.',
-		status: 'active',
-		progress: 35,
-		due: daysFromNow(30),
-		color: 'emerald',
-		memberIds: ['m2', 'm4', 'm5']
-	},
-	{
-		id: 'p6',
-		slug: 'onboarding',
-		name: 'Onboarding Flow',
-		description: 'Guided setup for new workspaces and teammate invites.',
-		status: 'completed',
-		progress: 100,
-		due: daysFromNow(-5),
-		color: 'rose',
-		memberIds: ['m1', 'm3', 'm5']
-	}
-]);
+type ProjectMemberRow = { project_id: string; member_id: string };
 
-export const tasks = $state<Task[]>([
-	// Workmaster Web
-	{
-		id: 't1',
-		title: 'Finalize pricing page copy',
-		projectId: 'p1',
-		assigneeId: 'm1',
-		status: 'in_progress',
-		priority: 'urgent',
-		due: daysFromNow(1),
-		tags: ['marketing']
-	},
-	{
-		id: 't2',
-		title: 'Build changelog page',
-		projectId: 'p1',
-		assigneeId: 'm2',
-		status: 'in_progress',
-		priority: 'high',
-		due: daysFromNow(3),
-		tags: ['frontend']
-	},
-	{
-		id: 't3',
-		title: 'Fix mobile nav overlap',
-		projectId: 'p1',
-		assigneeId: 'm3',
-		status: 'todo',
-		priority: 'medium',
-		due: daysFromNow(5),
-		tags: ['bug']
-	},
-	{
-		id: 't4',
-		title: 'Add dark mode toggle',
-		projectId: 'p1',
-		assigneeId: 'm2',
-		status: 'in_review',
-		priority: 'medium',
-		due: daysFromNow(2),
-		tags: ['frontend']
-	},
-	{
-		id: 't5',
-		title: 'Audit lighthouse scores',
-		projectId: 'p1',
-		assigneeId: 'm4',
-		status: 'backlog',
-		priority: 'low',
-		due: daysFromNow(10),
-		tags: ['performance']
-	},
-	{
-		id: 't6',
-		title: 'Write getting started guide',
-		projectId: 'p1',
-		assigneeId: 'm5',
-		status: 'done',
-		priority: 'medium',
-		due: daysFromNow(-2),
-		tags: ['docs']
-	},
-	// Mobile App
-	{
-		id: 't7',
-		title: 'Wire up push notifications',
-		projectId: 'p2',
-		assigneeId: 'm4',
-		status: 'in_progress',
-		priority: 'high',
-		due: daysFromNow(4),
-		tags: ['mobile']
-	},
-	{
-		id: 't8',
-		title: 'Offline sync for tasks',
-		projectId: 'p2',
-		assigneeId: 'm2',
-		status: 'in_progress',
-		priority: 'urgent',
-		due: daysFromNow(2),
-		tags: ['mobile', 'sync']
-	},
-	{
-		id: 't9',
-		title: 'Empty state illustrations',
-		projectId: 'p2',
-		assigneeId: 'm3',
-		status: 'todo',
-		priority: 'low',
-		due: daysFromNow(14),
-		tags: ['design']
-	},
-	{
-		id: 't10',
-		title: 'Beta invite flow',
-		projectId: 'p2',
-		assigneeId: 'm1',
-		status: 'in_review',
-		priority: 'high',
-		due: daysFromNow(1),
-		tags: ['growth']
-	},
-	{
-		id: 't11',
-		title: 'Crash reporting setup',
-		projectId: 'p2',
-		assigneeId: 'm4',
-		status: 'backlog',
-		priority: 'medium',
-		due: daysFromNow(20),
-		tags: ['infra']
-	},
-	{
-		id: 't12',
-		title: 'Splash screen polish',
-		projectId: 'p2',
-		assigneeId: 'm3',
-		status: 'done',
-		priority: 'low',
-		due: daysFromNow(-6),
-		tags: ['design']
-	},
-	// Design System
-	{
-		id: 't13',
-		title: 'Publish color tokens v2',
-		projectId: 'p3',
-		assigneeId: 'm3',
-		status: 'in_review',
-		priority: 'high',
-		due: daysFromNow(3),
-		tags: ['tokens']
-	},
-	{
-		id: 't14',
-		title: 'Document focus states',
-		projectId: 'p3',
-		assigneeId: 'm3',
-		status: 'backlog',
-		priority: 'medium',
-		due: daysFromNow(15),
-		tags: ['a11y']
-	},
-	// Billing v2
-	{
-		id: 't15',
-		title: 'Draft pricing tiers',
-		projectId: 'p4',
-		assigneeId: 'm1',
-		status: 'todo',
-		priority: 'high',
-		due: daysFromNow(7),
-		tags: ['pricing']
-	},
-	{
-		id: 't16',
-		title: 'Compare invoicing providers',
-		projectId: 'p4',
-		assigneeId: 'm6',
-		status: 'todo',
-		priority: 'medium',
-		due: daysFromNow(9),
-		tags: ['research']
-	},
-	// Analytics
-	{
-		id: 't17',
-		title: 'Velocity chart query',
-		projectId: 'p5',
-		assigneeId: 'm2',
-		status: 'in_progress',
-		priority: 'high',
-		due: daysFromNow(5),
-		tags: ['backend']
-	},
-	{
-		id: 't18',
-		title: 'Filter by date range',
-		projectId: 'p5',
-		assigneeId: 'm4',
-		status: 'todo',
-		priority: 'medium',
-		due: daysFromNow(8),
-		tags: ['frontend']
-	},
-	{
-		id: 't19',
-		title: 'Export to CSV',
-		projectId: 'p5',
-		assigneeId: 'm5',
-		status: 'backlog',
-		priority: 'low',
-		due: daysFromNow(25),
-		tags: ['reports']
-	},
-	// Onboarding
-	{
-		id: 't20',
-		title: 'Welcome checklist copy',
-		projectId: 'p6',
-		assigneeId: 'm5',
-		status: 'done',
-		priority: 'medium',
-		due: daysFromNow(-8),
-		tags: ['copy']
-	},
-	{
-		id: 't21',
-		title: 'Invite teammate flow',
-		projectId: 'p6',
-		assigneeId: 'm1',
-		status: 'done',
-		priority: 'high',
-		due: daysFromNow(-3),
-		tags: ['flow']
-	}
-]);
-
-export const activities = $state<Activity[]>([
-	{
-		id: 'a1',
-		memberId: 'm2',
-		action: 'moved',
-		target: 'Offline sync for tasks to In progress',
-		time: hoursAgo(1)
-	},
-	{
-		id: 'a2',
-		memberId: 'm3',
-		action: 'completed',
-		target: 'Splash screen polish',
-		time: hoursAgo(2)
-	},
-	{ id: 'a3', memberId: 'm1', action: 'created', target: 'Draft pricing tiers', time: hoursAgo(4) },
-	{
-		id: 'a4',
-		memberId: 'm4',
-		action: 'commented on',
-		target: 'Push notifications',
-		time: hoursAgo(6)
-	},
-	{
-		id: 'a5',
-		memberId: 'm5',
-		action: 'published',
-		target: 'Getting started guide',
-		time: hoursAgo(9)
-	},
-	{
-		id: 'a6',
-		memberId: 'm2',
-		action: 'moved',
-		target: 'Velocity chart query to In review',
-		time: hoursAgo(26)
-	}
-]);
-
-export function getCurrentUser(): Member {
-	return members.find((member) => member.id === currentUserId) ?? members[0];
-}
-
-export function memberById(id: string): Member {
-	return members.find((member) => member.id === id) ?? members[0];
-}
-
-export function projectById(id: string): Project {
-	return projects.find((project) => project.id === id) ?? projects[0];
-}
-
-function pushActivity(action: string, target: string): void {
-	activities.unshift({
-		id: `a-${Date.now()}`,
-		memberId: currentUserId,
-		action,
-		target,
-		time: new Date().toISOString()
-	});
-}
-
-export function moveTask(taskId: string, status: TaskStatus): void {
-	const task = tasks.find((t) => t.id === taskId);
-	if (!task || task.status === status) return;
-	const previous = task.status;
-	task.status = status;
-	pushActivity(
-		'moved',
-		`${task.title} from ${taskStatusStyles[previous].label} to ${taskStatusStyles[status].label}`
-	);
-}
-
-export function toggleTaskDone(taskId: string): void {
-	const task = tasks.find((t) => t.id === taskId);
-	if (!task) return;
-	const wasDone = task.status === 'done';
-	task.status = wasDone ? 'todo' : 'done';
-	pushActivity(wasDone ? 'reopened' : 'completed', task.title);
-}
-
-export function createTask(input: {
+type TaskRow = {
+	id: string;
 	title: string;
-	projectId: string;
-	status?: TaskStatus;
-	priority?: Priority;
-	assigneeId?: string;
-	due?: string;
-	tags?: string[];
-}): void {
-	const task: Task = {
-		id: `t-${Date.now()}`,
-		title: input.title,
-		projectId: input.projectId,
-		assigneeId: input.assigneeId ?? currentUserId,
-		status: input.status ?? 'backlog',
-		priority: input.priority ?? 'medium',
-		due: input.due ?? daysFromNow(7),
-		tags: input.tags ?? []
-	};
-	tasks.unshift(task);
-	pushActivity('created', task.title);
+	project_id: string;
+	assignee_id: string | null;
+	status: string;
+	priority: string;
+	due: string;
+	tags: string;
+};
+
+type ActivityRow = {
+	id: string;
+	member_id: string | null;
+	action: string;
+	target: string;
+	time: string;
+};
+
+let db: Database | null = null;
+let initPromise: Promise<void> | null = null;
+
+export const members = $state<Member[]>([]);
+export const projects = $state<Project[]>([]);
+export const tasks = $state<Task[]>([]);
+export const activities = $state<Activity[]>([]);
+export const status = $state({ ready: false, error: null as string | null });
+
+function requireDb(): Database {
+	if (!db) throw new Error('Store not initialised');
+	return db;
 }
 
-export function createProject(input: {
+function newId(): string {
+	return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function nowIso(): string {
+	return new Date().toISOString();
+}
+
+function memberFromRow(row: MemberRow): Member {
+	return {
+		id: row.id,
+		name: row.name,
+		email: row.email,
+		role: row.role,
+		color: row.color,
+		online: row.online === 1
+	};
+}
+
+function projectFromRow(row: ProjectRow, memberIds: string[]): Project {
+	return {
+		id: row.id,
+		slug: row.slug,
+		name: row.name,
+		description: row.description,
+		status: row.status as ProjectStatus,
+		progress: row.progress,
+		due: row.due,
+		color: row.color,
+		memberIds
+	};
+}
+
+function taskFromRow(row: TaskRow): Task {
+	let tags: string[] = [];
+	try {
+		tags = JSON.parse(row.tags) as string[];
+	} catch {
+		tags = [];
+	}
+	return {
+		id: row.id,
+		title: row.title,
+		projectId: row.project_id,
+		assigneeId: row.assignee_id,
+		status: row.status as TaskStatus,
+		priority: row.priority as Priority,
+		due: row.due,
+		tags
+	};
+}
+
+function activityFromRow(row: ActivityRow): Activity {
+	return {
+		id: row.id,
+		memberId: row.member_id,
+		action: row.action,
+		target: row.target,
+		time: row.time
+	};
+}
+
+export function initStore(): Promise<void> {
+	if (!initPromise) initPromise = load();
+	return initPromise;
+}
+
+async function load(): Promise<void> {
+	try {
+		db = await Database.load('sqlite:workmaster.db');
+		await refreshAll();
+	} catch (err) {
+		console.error('Failed to load the database', err);
+		status.error = err instanceof Error ? err.message : String(err);
+	}
+	status.ready = true;
+}
+
+async function refreshAll(): Promise<void> {
+	const database = requireDb();
+
+	const memberRows = await database.select<MemberRow[]>('SELECT * FROM members ORDER BY rowid');
+	members.splice(0, members.length, ...memberRows.map(memberFromRow));
+
+	const projectRows = await database.select<ProjectRow[]>('SELECT * FROM projects ORDER BY rowid');
+	const linkRows = await database.select<ProjectMemberRow[]>(
+		'SELECT project_id, member_id FROM project_members'
+	);
+	const memberIdsByProject = new Map<string, string[]>();
+	for (const link of linkRows) {
+		const list = memberIdsByProject.get(link.project_id) ?? [];
+		list.push(link.member_id);
+		memberIdsByProject.set(link.project_id, list);
+	}
+	projects.splice(
+		0,
+		projects.length,
+		...projectRows.map((row) => projectFromRow(row, memberIdsByProject.get(row.id) ?? []))
+	);
+
+	const taskRows = await database.select<TaskRow[]>('SELECT * FROM tasks ORDER BY rowid');
+	tasks.splice(0, tasks.length, ...taskRows.map(taskFromRow));
+
+	const activityRows = await database.select<ActivityRow[]>(
+		'SELECT * FROM activities ORDER BY rowid DESC'
+	);
+	activities.splice(0, activities.length, ...activityRows.map(activityFromRow));
+}
+
+export function memberById(id: string | null): Member | undefined {
+	if (!id) return undefined;
+	return members.find((member) => member.id === id);
+}
+
+export function projectById(id: string): Project | undefined {
+	return projects.find((project) => project.id === id);
+}
+
+export async function addMember(input: { name: string; email: string; role: string }): Promise<void> {
+	const database = requireDb();
+	const member: Member = {
+		id: newId(),
+		name: input.name,
+		email: input.email,
+		role: input.role,
+		color: avatarColors[members.length % avatarColors.length],
+		online: true
+	};
+	await database.execute(
+		'INSERT INTO members (id, name, email, role, color, online) VALUES (?, ?, ?, ?, ?, 1)',
+		[member.id, member.name, member.email, member.role, member.color]
+	);
+	members.push(member);
+}
+
+export async function createProject(input: {
 	name: string;
 	description?: string;
 	status?: ProjectStatus;
 	due?: string;
-}): void {
+}): Promise<void> {
+	const database = requireDb();
 	const slug = input.name
 		.toLowerCase()
 		.replace(/[^a-z0-9]+/g, '-')
 		.replace(/(^-|-$)/g, '');
 	const project: Project = {
-		id: `p-${Date.now()}`,
+		id: newId(),
 		slug,
 		name: input.name,
 		description: input.description ?? 'A new project on Workmaster.',
@@ -465,8 +213,89 @@ export function createProject(input: {
 		progress: 0,
 		due: input.due ?? daysFromNow(30),
 		color: 'indigo',
-		memberIds: [currentUserId]
+		memberIds: []
 	};
+	await database.execute(
+		'INSERT INTO projects (id, slug, name, description, status, progress, due, color) VALUES (?, ?, ?, ?, ?, 0, ?, ?)',
+		[project.id, project.slug, project.name, project.description, project.status, project.due, project.color]
+	);
 	projects.unshift(project);
-	pushActivity('created', project.name);
+	await addActivity('created', project.name);
+}
+
+export async function createTask(input: {
+	title: string;
+	projectId: string;
+	status?: TaskStatus;
+	priority?: Priority;
+	assigneeId?: string | null;
+	due?: string;
+	tags?: string[];
+}): Promise<void> {
+	const database = requireDb();
+	const task: Task = {
+		id: newId(),
+		title: input.title,
+		projectId: input.projectId,
+		assigneeId: input.assigneeId ?? null,
+		status: input.status ?? 'backlog',
+		priority: input.priority ?? 'medium',
+		due: input.due ?? daysFromNow(7),
+		tags: input.tags ?? []
+	};
+	await database.execute(
+		'INSERT INTO tasks (id, title, project_id, assignee_id, status, priority, due, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+		[
+			task.id,
+			task.title,
+			task.projectId,
+			task.assigneeId,
+			task.status,
+			task.priority,
+			task.due,
+			JSON.stringify(task.tags)
+		]
+	);
+	tasks.unshift(task);
+	await addActivity('created', task.title);
+}
+
+export async function moveTask(taskId: string, status: TaskStatus): Promise<void> {
+	const database = requireDb();
+	const task = tasks.find((t) => t.id === taskId);
+	if (!task || task.status === status) return;
+	const previous = task.status;
+	await database.execute('UPDATE tasks SET status = ? WHERE id = ?', [status, taskId]);
+	task.status = status;
+	await addActivity(
+		'moved',
+		`${task.title} from ${taskStatusStyles[previous].label} to ${taskStatusStyles[status].label}`
+	);
+}
+
+export async function toggleTaskDone(taskId: string): Promise<void> {
+	const database = requireDb();
+	const task = tasks.find((t) => t.id === taskId);
+	if (!task) return;
+	const wasDone = task.status === 'done';
+	const next = wasDone ? 'todo' : 'done';
+	await database.execute('UPDATE tasks SET status = ? WHERE id = ?', [next, taskId]);
+	task.status = next as TaskStatus;
+	await addActivity(wasDone ? 'reopened' : 'completed', task.title);
+}
+
+async function addActivity(action: string, target: string): Promise<void> {
+	const database = requireDb();
+	const activity: Activity = {
+		id: newId(),
+		memberId: null,
+		action,
+		target,
+		time: nowIso()
+	};
+	await database.execute(
+		'INSERT INTO activities (id, member_id, action, target, time) VALUES (?, NULL, ?, ?, ?)',
+		[activity.id, action, target, activity.time]
+	);
+	activities.unshift(activity);
 }

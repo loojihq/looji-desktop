@@ -216,7 +216,10 @@
 			<div class="mt-4 flex items-center justify-between border-t border-neutral-100 pt-4">
 				<div class="flex -space-x-2">
 					{#each project.memberIds.slice(0, 4) as memberId (memberId)}
-						<Avatar member={memberById(memberId)} size="sm" ring />
+						{@const member = memberById(memberId)}
+						{#if member}
+							<Avatar member={member} size="sm" ring />
+						{/if}
 					{/each}
 				</div>
 				<span class="inline-flex items-center gap-1.5 text-xs text-neutral-400">
@@ -226,11 +229,28 @@
 			</div>
 		</a>
 	{:else}
-		<div
-			class="col-span-full rounded-xl border border-dashed border-neutral-300 bg-white/60 px-6 py-16 text-center"
-		>
-			<p class="text-sm font-medium text-neutral-600">No projects match your filters</p>
-			<p class="mt-1 text-sm text-neutral-400">Try a different search or status.</p>
-		</div>
+		{#if projects.length === 0}
+			<div
+				class="col-span-full rounded-xl border border-dashed border-neutral-300 bg-white/60 px-6 py-16 text-center"
+			>
+				<p class="text-sm font-medium text-neutral-600">No projects yet</p>
+				<p class="mt-1 text-sm text-neutral-400">Create your first project to get started.</p>
+				<button
+					type="button"
+					onclick={() => (showForm = true)}
+					class="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500"
+				>
+					<Plus size={15} />
+					New project
+				</button>
+			</div>
+		{:else}
+			<div
+				class="col-span-full rounded-xl border border-dashed border-neutral-300 bg-white/60 px-6 py-16 text-center"
+			>
+				<p class="text-sm font-medium text-neutral-600">No projects match your filters</p>
+				<p class="mt-1 text-sm text-neutral-400">Try a different search or status.</p>
+			</div>
+		{/if}
 	{/each}
 </div>

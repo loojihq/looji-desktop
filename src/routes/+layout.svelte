@@ -3,10 +3,15 @@
 	import './layout.css';
 	import favicon from '$lib/assets/favicon.svg';
 	import Sidebar from '$lib/components/Sidebar.svelte';
+	import { initStore, status } from '$lib/store.svelte';
 
 	let { children } = $props();
 
 	let mobileOpen = $state(false);
+
+	$effect(() => {
+		initStore();
+	});
 
 	$effect(() => {
 		if (!mobileOpen) return;
@@ -64,7 +69,23 @@
 		</header>
 
 		<main class="mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-10">
-			{@render children()}
+			{#if status.error}
+				<div
+					class="rounded-xl border border-red-200 bg-red-50 px-6 py-8 text-sm text-red-700"
+				>
+					<p class="font-semibold">Could not open the database</p>
+					<p class="mt-1">{status.error}</p>
+				</div>
+			{:else if !status.ready}
+				<div class="flex flex-col items-center justify-center py-24">
+					<span
+						class="size-8 animate-spin rounded-full border-2 border-neutral-300 border-t-indigo-600"
+					></span>
+					<p class="mt-3 text-sm text-neutral-400">Loading workspace</p>
+				</div>
+			{:else}
+				{@render children()}
+			{/if}
 		</main>
 	</div>
 </div>

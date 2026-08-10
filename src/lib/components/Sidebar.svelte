@@ -3,12 +3,9 @@
 	import { resolve } from '$app/paths';
 	import { FolderKanban, Layers, LayoutDashboard, ListTodo, Settings, Users } from '@lucide/svelte';
 	import { projectAccents } from '$lib/badges';
-	import { getCurrentUser, projects } from '$lib/store.svelte';
-	import Avatar from './Avatar.svelte';
+	import { projects } from '$lib/store.svelte';
 
 	let { onNavigate = () => {} }: { onNavigate?: () => void } = $props();
-
-	const currentUser = $derived(getCurrentUser());
 
 	const navItems = [
 		{ href: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -88,19 +85,4 @@
 			{/each}
 		</div>
 	</nav>
-
-	<div class="border-t border-neutral-200 p-3">
-		<a
-			href={resolve('/settings')}
-			onclick={onNavigate}
-			class="flex items-center gap-3 rounded-lg px-2 py-2 transition-colors hover:bg-neutral-100"
-		>
-			<Avatar member={currentUser} />
-			<div class="min-w-0">
-				<p class="truncate text-sm font-medium text-neutral-900">{currentUser.name}</p>
-				<p class="truncate text-xs text-neutral-500">{currentUser.email}</p>
-			</div>
-			<Settings size={16} class="ml-auto shrink-0 text-neutral-400" />
-		</a>
-	</div>
 </aside>

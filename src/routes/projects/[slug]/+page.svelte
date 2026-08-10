@@ -1,16 +1,21 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
-	import { ArrowLeft, CalendarDays, Plus } from '@lucide/svelte';
+	import { ArrowLeft, CalendarDays, Plus, User } from '@lucide/svelte';
 	import Avatar from '$lib/components/Avatar.svelte';
 	import Badge from '$lib/components/Badge.svelte';
 	import ProgressBar from '$lib/components/ProgressBar.svelte';
 	import { projectAccents, priorityStyles, taskStatusStyles } from '$lib/badges';
-	import { createTask, memberById, moveTask, projects, tasks } from '$lib/store.svelte';
-	import type { TaskStatus } from '$lib/types';
+	import { createTask, memberById, members, moveTask, projects, tasks } from '$lib/store.svelte';
+	import type { Member, TaskStatus } from '$lib/types';
 	import { daysFromNow, dueLabel, formatDate, isOverdue } from '$lib/utils';
 
 	const project = $derived(projects.find((p) => p.slug === page.params.slug));
+	const projectMembers = $derived(
+		project
+			? project.memberIds.map(memberById).filter((m): m is Member => m !== undefined)
+			: []
+	);
 
 	const columns: TaskStatus[] = ['backlog', 'todo', 'in_progress', 'in_review', 'done'];
 
@@ -36,6 +41,7 @@
 
 	let addingStatus = $state<TaskStatus | null>(null);
 	let newTitle = $state('');
+	let newAssigneeId = $state('');
 
 	function handleAdd(status: TaskStatus) {
 		if (!project || !newTitle.trim()) return;
@@ -44,9 +50,11 @@
 			projectId: project.id,
 			status,
 			priority: 'medium',
+			assigneeId: newAssigneeId || null,
 			due: daysFromNow(7)
 		});
 		newTitle = '';
+		newAssigneeId = '';
 		addingStatus = null;
 	}
 </script>
@@ -106,8 +114,8 @@
 
 		<div class="mt-5 flex items-center justify-between border-t border-neutral-100 pt-4">
 			<div class="flex -space-x-2">
-				{#each project.memberIds as memberId (memberId)}
-					<Avatar member={memberById(memberId)} ring />
+				{#each projectMembers as member (member.id)}
+					<Avatar member={member} ring />
 				{/each}
 			</div>
 			<p class="text-xs text-neutral-400">{openCount} open tasks</p>
@@ -190,7 +198,16 @@
 									</div>
 								{/if}
 								<footer class="mt-3 flex items-center justify-between">
-									<Avatar member={assignee} size="xs" />
+									{#if assignee}
+										<Avatar member={assignee} size="xs" />
+									{:else}
+										<span
+											class="flex size-5 shrink-0 items-center justify-center rounded-full bg-neutral-200 text-neutral-400"
+											title="Unassigned"
+										>
+											<User size={11} />
+										</span>
+									{/if}
 									<span
 										class={isOverdue(task.due)
 											? 'text-xs font-medium text-red-600'
@@ -204,13 +221,24 @@
 					</div>
 
 					{#if addingStatus === status}
-						<form class="mt-2" onsubmit={() => handleAdd(status)}>
+						<form class="mt-2 space-y-2" onsubmit={() => handleAdd(status)}>
 							<input
 								type="text"
 								placeholder="Task title"
 								class="w-full rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
 								bind:value={newTitle}
+								required
 							/>
+							<select
+								class="w-full rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
+								bind:value={newAssigneeId}
+								aria-label="Assignee"
+							>
+								<option value="">Unassigned</option>
+								{#each members as member (member.id)}
+									<option value={member.id}>{member.name}</option>
+								{/each}
+							</select>
 						</form>
 					{/if}
 				</div>
