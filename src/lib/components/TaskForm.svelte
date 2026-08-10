@@ -18,6 +18,7 @@
 	let assigneeId = $state('');
 	let due = $state('');
 	let tags = $state('');
+	let error = $state('');
 
 	$effect(() => {
 		if (!open) return;
@@ -32,21 +33,27 @@
 
 	async function handleSubmit() {
 		if (!title.trim() || !projectId) return;
-		const payload = {
-			title: title.trim(),
-			projectId,
-			status,
-			priority,
-			assigneeId: assigneeId || null,
-			due: due ? new Date(`${due}T12:00:00`).toISOString() : daysFromNow(7),
-			tags: tags
-				.split(',')
-				.map((tag) => tag.trim())
-				.filter(Boolean)
-		};
-		if (task) await updateTask(task.id, payload);
-		else await createTask(payload);
-		onClose();
+		error = '';
+		try {
+			const payload = {
+				title: title.trim(),
+				projectId,
+				status,
+				priority,
+				assigneeId: assigneeId || null,
+				due: due ? new Date(`${due}T12:00:00`).toISOString() : daysFromNow(7),
+				tags: tags
+					.split(',')
+					.map((tag) => tag.trim())
+					.filter(Boolean)
+			};
+			if (task) await updateTask(task.id, payload);
+			else await createTask(payload);
+			onClose();
+		} catch (err) {
+			console.error('Failed to save task', err);
+			error = err instanceof Error ? err.message : String(err);
+		}
 	}
 </script>
 
@@ -143,6 +150,9 @@
 				bind:value={tags}
 			/>
 		</div>
+		{#if error}
+			<p class="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
+		{/if}
 		<div class="flex justify-end gap-2 pt-2">
 			<button
 				type="button"

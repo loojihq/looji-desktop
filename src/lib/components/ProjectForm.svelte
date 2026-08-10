@@ -15,6 +15,7 @@
 	let description = $state('');
 	let status = $state<ProjectStatus>('planning');
 	let due = $state('');
+	let error = $state('');
 
 	$effect(() => {
 		if (!open) return;
@@ -26,15 +27,21 @@
 
 	async function handleSubmit() {
 		if (!name.trim()) return;
-		const payload = {
-			name: name.trim(),
-			description: description.trim(),
-			status,
-			due: due ? new Date(`${due}T12:00:00`).toISOString() : daysFromNow(30)
-		};
-		if (project) await updateProject(project.id, payload);
-		else await createProject(payload);
-		onClose();
+		error = '';
+		try {
+			const payload = {
+				name: name.trim(),
+				description: description.trim(),
+				status,
+				due: due ? new Date(`${due}T12:00:00`).toISOString() : daysFromNow(30)
+			};
+			if (project) await updateProject(project.id, payload);
+			else await createProject(payload);
+			onClose();
+		} catch (err) {
+			console.error('Failed to save project', err);
+			error = err instanceof Error ? err.message : String(err);
+		}
 	}
 </script>
 
@@ -89,6 +96,9 @@
 				/>
 			</div>
 		</div>
+		{#if error}
+			<p class="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
+		{/if}
 		<div class="flex justify-end gap-2 pt-2">
 			<button
 				type="button"

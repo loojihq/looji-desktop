@@ -14,6 +14,7 @@
 	let name = $state('');
 	let email = $state('');
 	let role = $state('Engineering');
+	let error = $state('');
 
 	$effect(() => {
 		if (!open) return;
@@ -24,10 +25,16 @@
 
 	async function handleSubmit() {
 		if (!name.trim() || !email.trim()) return;
-		const payload = { name: name.trim(), email: email.trim(), role };
-		if (member) await updateMember(member.id, payload);
-		else await addMember(payload);
-		onClose();
+		error = '';
+		try {
+			const payload = { name: name.trim(), email: email.trim(), role };
+			if (member) await updateMember(member.id, payload);
+			else await addMember(payload);
+			onClose();
+		} catch (err) {
+			console.error('Failed to save member', err);
+			error = err instanceof Error ? err.message : String(err);
+		}
 	}
 </script>
 
@@ -67,6 +74,9 @@
 				{/each}
 			</select>
 		</div>
+		{#if error}
+			<p class="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
+		{/if}
 		<div class="flex justify-end gap-2 pt-2">
 			<button
 				type="button"
