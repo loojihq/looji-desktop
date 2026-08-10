@@ -1,45 +1,28 @@
 <script lang="ts">
-	import { CalendarDays, FolderKanban, Plus, Search, X } from '@lucide/svelte';
+	import { resolve } from '$app/paths';
+	import { CalendarDays, FolderKanban, Pencil, Plus, Search, Trash2 } from '@lucide/svelte';
 	import Avatar from '$lib/components/Avatar.svelte';
 	import Badge from '$lib/components/Badge.svelte';
+	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import ProgressBar from '$lib/components/ProgressBar.svelte';
-	import { projectAccents, projectStatusStyles } from '$lib/badges';
-	import { createProject, memberById, projects } from '$lib/store.svelte';
-	import { resolve } from '$app/paths';
-	import type { ProjectStatus } from '$lib/types';
-	import { daysFromNow, formatDate } from '$lib/utils';
-
-	const createStatuses: ProjectStatus[] = ['planning', 'active', 'on_hold'];
+	import ProjectForm from '$lib/components/ProjectForm.svelte';
+	import { projectAccents } from '$lib/badges';
+	import { deleteProject, memberById, projectProgress, projects } from '$lib/store.svelte';
+	import type { Project, ProjectStatus } from '$lib/types';
+	import { formatDate } from '$lib/utils';
 
 	let query = $state('');
 	let statusFilter = $state<'all' | ProjectStatus>('all');
-	let showForm = $state(false);
-	let newName = $state('');
-	let newStatus = $state<ProjectStatus>('planning');
-	let newDue = $state('');
+	let createOpen = $state(false);
+	let editTarget = $state<Project | null>(null);
+	let deleteTarget = $state<Project | null>(null);
 
 	const tabs = $derived([
 		{ value: 'all', label: 'All', count: projects.length },
-		{
-			value: 'planning',
-			label: 'Planning',
-			count: projects.filter((p) => p.status === 'planning').length
-		},
-		{
-			value: 'active',
-			label: 'Active',
-			count: projects.filter((p) => p.status === 'active').length
-		},
-		{
-			value: 'on_hold',
-			label: 'On hold',
-			count: projects.filter((p) => p.status === 'on_hold').length
-		},
-		{
-			value: 'completed',
-			label: 'Completed',
-			count: projects.filter((p) => p.status === 'completed').length
-		}
+		{ value: 'planning', label: 'Planning', count: projects.filter((p) => p.status === 'planning').length },
+		{ value: 'active', label: 'Active', count: projects.filter((p) => p.status === 'active').length },
+		{ value: 'on_hold', label: 'On hold', count: projects.filter((p) => p.status === 'on_hold').length },
+		{ value: 'completed', label: 'Completed', count: projects.filter((p) => p.status === 'completed').length }
 	] as const);
 
 	const filtered = $derived(
@@ -52,13 +35,10 @@
 		})
 	);
 
-	function handleCreate() {
-		if (!newName.trim()) return;
-		createProject({ name: newName.trim(), status: newStatus, due: newDue || daysFromNow(30) });
-		newName = '';
-		newStatus = 'planning';
-		newDue = '';
-		showForm = false;
+	async function handleDelete() {
+		if (!deleteTarget) return;
+		await deleteProject(deleteTarget.id);
+		deleteTarget = null;
 	}
 </script>
 
@@ -75,69 +55,13 @@
 	</div>
 	<button
 		type="button"
-		onclick={() => (showForm = !showForm)}
+		onclick={() => (createOpen = true)}
 		class="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-indigo-500"
 	>
-		{#if showForm}
-			<X size={16} />
-		{:else}
-			<Plus size={16} strokeWidth={2.5} />
-		{/if}
-		{showForm ? 'Cancel' : 'New project'}
+		<Plus size={16} strokeWidth={2.5} />
+		New project
 	</button>
 </div>
-
-{#if showForm}
-	<form
-		onsubmit={handleCreate}
-		class="mb-6 rounded-xl border border-indigo-200 bg-indigo-50/60 p-4 shadow-xs sm:flex sm:items-end sm:gap-3"
-	>
-		<div class="flex-1">
-			<label for="project-name" class="mb-1 block text-xs font-medium text-neutral-600">
-				Project name
-			</label>
-			<input
-				id="project-name"
-				type="text"
-				placeholder="e.g. iOS redesign"
-				class="w-full rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
-				bind:value={newName}
-				required
-			/>
-		</div>
-		<div>
-			<label for="project-status" class="mb-1 block text-xs font-medium text-neutral-600">
-				Status
-			</label>
-			<select
-				id="project-status"
-				class="w-full rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
-				bind:value={newStatus}
-			>
-				{#each createStatuses as status (status)}
-					<option value={status}>{projectStatusStyles[status].label}</option>
-				{/each}
-			</select>
-		</div>
-		<div>
-			<label for="project-due" class="mb-1 block text-xs font-medium text-neutral-600">
-				Target date
-			</label>
-			<input
-				id="project-due"
-				type="date"
-				class="rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
-				bind:value={newDue}
-			/>
-		</div>
-		<button
-			type="submit"
-			class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500"
-		>
-			Create project
-		</button>
-	</form>
-{/if}
 
 <div class="mb-6 flex flex-wrap items-center gap-3">
 	<div class="flex flex-wrap items-center gap-2">
@@ -145,19 +69,12 @@
 			<button
 				type="button"
 				onclick={() => (statusFilter = tab.value)}
-				class="rounded-lg px-3 py-1.5 text-sm font-medium transition-colors {statusFilter ===
-				tab.value
+				class="rounded-lg px-3 py-1.5 text-sm font-medium transition-colors {statusFilter === tab.value
 					? 'bg-neutral-900 text-white'
 					: 'border border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-50'}"
 			>
 				{tab.label}
-				<span
-					class="ml-1.5 text-xs {statusFilter === tab.value
-						? 'text-neutral-400'
-						: 'text-neutral-400'}"
-				>
-					{tab.count}
-				</span>
+				<span class="ml-1.5 text-xs text-neutral-400">{tab.count}</span>
 			</button>
 		{/each}
 	</div>
@@ -177,8 +94,7 @@
 
 <div class="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3">
 	{#each filtered as project (project.id)}
-		<a
-			href={resolve(`/projects/${project.slug}`)}
+		<article
 			class="group flex flex-col rounded-xl border border-neutral-200 bg-white p-5 shadow-xs transition-all hover:-translate-y-0.5 hover:border-neutral-300 hover:shadow-md"
 		>
 			<div class="flex items-start justify-between gap-3">
@@ -191,13 +107,34 @@
 						<FolderKanban size={20} />
 					</span>
 					<div>
-						<h3 class="font-semibold tracking-tight text-neutral-900 group-hover:text-indigo-600">
+						<a
+							href={resolve(`/projects/${project.slug}`)}
+							class="font-semibold tracking-tight text-neutral-900 hover:text-indigo-600"
+						>
 							{project.name}
-						</h3>
+						</a>
 						<p class="text-xs text-neutral-400">{project.memberIds.length} members</p>
 					</div>
 				</div>
-				<Badge variant="project" value={project.status} />
+				<div class="flex items-center gap-1">
+					<Badge variant="project" value={project.status} />
+					<button
+						type="button"
+						class="rounded-lg p-1.5 text-neutral-400 opacity-0 transition-opacity hover:bg-neutral-100 hover:text-neutral-700 focus-visible:opacity-100 group-hover:opacity-100"
+						aria-label="Edit {project.name}"
+						onclick={() => (editTarget = project)}
+					>
+						<Pencil size={14} />
+					</button>
+					<button
+						type="button"
+						class="rounded-lg p-1.5 text-neutral-400 opacity-0 transition-opacity hover:bg-red-50 hover:text-red-600 focus-visible:opacity-100 group-hover:opacity-100"
+						aria-label="Delete {project.name}"
+						onclick={() => (deleteTarget = project)}
+					>
+						<Trash2 size={14} />
+					</button>
+				</div>
 			</div>
 
 			<p class="mt-4 line-clamp-2 text-sm text-neutral-500">{project.description}</p>
@@ -205,10 +142,10 @@
 			<div class="mt-4">
 				<div class="mb-1.5 flex items-center justify-between text-xs">
 					<span class="font-medium text-neutral-400">Progress</span>
-					<span class="font-semibold text-neutral-600">{project.progress}%</span>
+					<span class="font-semibold text-neutral-600">{projectProgress(project.id)}%</span>
 				</div>
 				<ProgressBar
-					value={project.progress}
+					value={projectProgress(project.id)}
 					color={projectAccents[project.color]?.bar ?? 'bg-indigo-500'}
 				/>
 			</div>
@@ -227,7 +164,7 @@
 					{formatDate(project.due)}
 				</span>
 			</div>
-		</a>
+		</article>
 	{:else}
 		{#if projects.length === 0}
 			<div
@@ -237,7 +174,7 @@
 				<p class="mt-1 text-sm text-neutral-400">Create your first project to get started.</p>
 				<button
 					type="button"
-					onclick={() => (showForm = true)}
+					onclick={() => (createOpen = true)}
 					class="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500"
 				>
 					<Plus size={15} />
@@ -254,3 +191,14 @@
 		{/if}
 	{/each}
 </div>
+
+<ProjectForm open={createOpen} onClose={() => (createOpen = false)} />
+<ProjectForm open={editTarget !== null} project={editTarget} onClose={() => (editTarget = null)} />
+<ConfirmDialog
+	open={deleteTarget !== null}
+	title="Delete project?"
+	message={`This will permanently delete "${deleteTarget?.name ?? ''}" and all of its tasks.`}
+	confirmLabel="Delete project"
+	onConfirm={handleDelete}
+	onCancel={() => (deleteTarget = null)}
+/>

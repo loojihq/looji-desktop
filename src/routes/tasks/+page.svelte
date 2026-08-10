@@ -1,10 +1,13 @@
 <script lang="ts">
-	import { Plus, Search } from '@lucide/svelte';
+	import { Pencil, Plus, Search, Trash2 } from '@lucide/svelte';
 	import Avatar from '$lib/components/Avatar.svelte';
 	import Badge from '$lib/components/Badge.svelte';
+	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+	import TaskForm from '$lib/components/TaskForm.svelte';
 	import { priorityStyles, projectAccents, taskStatusStyles } from '$lib/badges';
 	import {
 		createTask,
+		deleteTask,
 		memberById,
 		members,
 		projectById,
@@ -12,7 +15,7 @@
 		tasks,
 		toggleTaskDone
 	} from '$lib/store.svelte';
-	import { priorities, taskStatuses, type Priority, type TaskStatus } from '$lib/types';
+	import { priorities, taskStatuses, type Priority, type Task, type TaskStatus } from '$lib/types';
 	import { daysFromNow, dueLabel, isOverdue } from '$lib/utils';
 	import { resolve } from '$app/paths';
 
@@ -24,6 +27,9 @@
 	let newProjectId = $state('');
 	let newAssigneeId = $state('');
 	let newPriority = $state<Priority>('medium');
+	let createOpen = $state(false);
+	let editTarget = $state<Task | null>(null);
+	let deleteTarget = $state<Task | null>(null);
 
 	$effect(() => {
 		if (!newProjectId && projects[0]) newProjectId = projects[0].id;
@@ -59,6 +65,12 @@
 		});
 		newTitle = '';
 	}
+
+	async function handleDelete() {
+		if (!deleteTarget) return;
+		await deleteTask(deleteTarget.id);
+		deleteTarget = null;
+	}
 </script>
 
 <svelte:head>
@@ -72,7 +84,8 @@
 	</p>
 </div>
 
-<form class="mb-4 flex flex-wrap items-center gap-2" onsubmit={handleQuickAdd}>
+<div class="mb-4 flex items-center justify-between">
+	<form class="flex flex-1 flex-wrap items-center gap-2" onsubmit={handleQuickAdd}>
 	<div class="relative min-w-64 flex-1">
 		<Plus
 			size={16}
@@ -120,6 +133,15 @@
 		Add task
 	</button>
 </form>
+	<button
+		type="button"
+		onclick={() => (createOpen = true)}
+		class="ml-2 inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm font-medium text-neutral-700 transition-colors hover:bg-neutral-50"
+	>
+		<Plus size={15} />
+		New task
+	</button>
+</div>
 
 <div class="mb-4 flex flex-wrap items-center gap-3">
 	<div class="relative w-full sm:max-w-xs">
@@ -173,6 +195,7 @@
 					<th class="px-3 py-3">Priority</th>
 					<th class="px-3 py-3">Due</th>
 					<th class="px-5 py-3">Status</th>
+					<th class="w-20 px-3 py-3"></th>
 				</tr>
 			</thead>
 			<tbody>
@@ -255,10 +278,30 @@
 						<td class="px-5 py-3">
 							<Badge variant="task" value={task.status} />
 						</td>
+						<td class="px-3 py-3">
+							<div class="flex items-center gap-0.5">
+								<button
+									type="button"
+									class="rounded-md p-1.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
+									aria-label="Edit {task.title}"
+									onclick={() => (editTarget = task)}
+								>
+									<Pencil size={14} />
+								</button>
+								<button
+									type="button"
+									class="rounded-md p-1.5 text-neutral-400 hover:bg-red-50 hover:text-red-600"
+									aria-label="Delete {task.title}"
+									onclick={() => (deleteTarget = task)}
+								>
+									<Trash2 size={14} />
+								</button>
+							</div>
+						</td>
 					</tr>
 				{:else}
 					<tr>
-						<td colspan="7" class="px-5 py-16 text-center text-sm text-neutral-400">
+						<td colspan="8" class="px-5 py-16 text-center text-sm text-neutral-400">
 							{#if tasks.length === 0}
 								No tasks yet. Add your first task above.
 							{:else}
@@ -271,3 +314,14 @@
 		</table>
 	</div>
 </div>
+
+<TaskForm open={createOpen} onClose={() => (createOpen = false)} />
+<TaskForm open={editTarget !== null} task={editTarget} onClose={() => (editTarget = null)} />
+<ConfirmDialog
+	open={deleteTarget !== null}
+	title="Delete task?"
+	message={`This will permanently delete "${deleteTarget?.title ?? ''}".`}
+	confirmLabel="Delete task"
+	onConfirm={handleDelete}
+	onCancel={() => (deleteTarget = null)}
+/>

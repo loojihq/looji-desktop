@@ -176,6 +176,20 @@ export function projectById(id: string): Project | undefined {
 	return projects.find((project) => project.id === id);
 }
 
+export function projectProgress(projectId: string): number {
+	const projectTasks = tasks.filter((task) => task.projectId === projectId);
+	if (projectTasks.length === 0) return 0;
+	const done = projectTasks.filter((task) => task.status === 'done').length;
+	return Math.round((done / projectTasks.length) * 100);
+}
+
+function slugify(name: string): string {
+	return name
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, '-')
+		.replace(/(^-|-$)/g, '');
+}
+
 export async function addMember(input: { name: string; email: string; role: string }): Promise<void> {
 	const database = requireDb();
 	const member: Member = {
@@ -193,20 +207,16 @@ export async function addMember(input: { name: string; email: string; role: stri
 	members.push(member);
 }
 
-export async function createProject(input: {
+	export async function createProject(input: {
 	name: string;
 	description?: string;
 	status?: ProjectStatus;
 	due?: string;
 }): Promise<void> {
 	const database = requireDb();
-	const slug = input.name
-		.toLowerCase()
-		.replace(/[^a-z0-9]+/g, '-')
-		.replace(/(^-|-$)/g, '');
 	const project: Project = {
 		id: newId(),
-		slug,
+		slug: slugify(input.name),
 		name: input.name,
 		description: input.description ?? 'A new project on Workmaster.',
 		status: input.status ?? 'planning',
@@ -298,4 +308,115 @@ async function addActivity(action: string, target: string): Promise<void> {
 		[activity.id, action, target, activity.time]
 	);
 	activities.unshift(activity);
+}
+
+export async function updateProject(
+	id: string,
+	input: { name: string; description: string; status: ProjectStatus; due: string }
+): Promise<void> {
+	const project = projects.find((p) => p.id === id);
+	if (!project) return;
+	const database = requireDb();
+	await database.execute(
+		'UPDATE projects SET name = ?, description = ?, status = ?, due = ? WHERE id = ?',
+		[input.name, input.description, input.status, input.due, id]
+	);
+	project.name = input.name;
+	project.description = input.description;
+	project.status = input.status;
+	project.due = input.due;
+	await addActivity('updated', project.name);
+}
+
+export async function deleteProject(id: string): Promise<void> {
+	const project = projects.find((p) => p.id === id);
+	if (!project) return;
+	const database = requireDb();
+	await database.execute('DELETE FROM tasks WHERE project_id = ?', [id]);
+	await database.execute('DELETE FROM project_members WHERE project_id = ?', [id]);
+	await database.execute('DELETE FROM projects WHERE id = ?', [id]);
+	const remainingTasks = tasks.filter((task) => task.projectId !== id);
+	tasks.splice(0, tasks.length, ...remainingTasks);
+	projects.splice(projects.indexOf(project), 1);
+	await addActivity('deleted', project.name);
+}
+
+export async function updateTask(
+	id: string,
+	input: {
+		title: string;
+		projectId: string;
+		assigneeId: string | null;
+		status: TaskStatus;
+		priority: Priority;
+		due: string;
+		tags: string[];
+	}
+): Promise<void> {
+	const task = tasks.find((t) => t.id === id);
+	if (!task) return;
+	const database = requireDb();
+	await database.execute(
+		'UPDATE tasks SET title = ?, project_id = ?, assignee_id = ?, status = ?, priority = ?, due = ?, tags = ? WHERE id = ?',
+		[
+			input.title,
+			input.projectId,
+			input.assigneeId,
+			input.status,
+			input.priority,
+			input.due,
+			JSON.stringify(input.tags),
+			id
+		]
+	);
+	task.title = input.title;
+	task.projectId = input.projectId;
+	task.assigneeId = input.assigneeId;
+	task.status = input.status;
+	task.priority = input.priority;
+	task.due = input.due;
+	task.tags = input.tags;
+	await addActivity('updated', task.title);
+}
+
+export async function deleteTask(id: string): Promise<void> {
+	const task = tasks.find((t) => t.id === id);
+	if (!task) return;
+	const database = requireDb();
+	await database.execute('DELETE FROM tasks WHERE id = ?', [id]);
+	tasks.splice(tasks.indexOf(task), 1);
+	await addActivity('deleted', task.title);
+}
+
+export async function updateMember(
+	id: string,
+	input: { name: string; email: string; role: string }
+): Promise<void> {
+	const member = members.find((m) => m.id === id);
+	if (!member) return;
+	const database = requireDb();
+	await database.execute('UPDATE members SET name = ?, email = ?, role = ? WHERE id = ?', [
+		input.name,
+		input.email,
+		input.role,
+		id
+	]);
+	member.name = input.name;
+	member.email = input.email;
+	member.role = input.role;
+	await addActivity('updated', member.name);
+}
+
+export async function deleteMember(id: string): Promise<void> {
+	const member = members.find((m) => m.id === id);
+	if (!member) return;
+	const database = requireDb();
+	await database.execute('UPDATE tasks SET assignee_id = NULL WHERE assignee_id = ?', [id]);
+	await database.execute('DELETE FROM project_members WHERE member_id = ?', [id]);
+	await database.execute('DELETE FROM members WHERE id = ?', [id]);
+	for (const task of tasks) {
+		if (task.assigneeId === id) task.assigneeId = null;
+	}
+	members.splice(members.indexOf(member), 1);
+	await addActivity('removed', member.name);
 }

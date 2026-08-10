@@ -20,6 +20,7 @@
 		memberById,
 		members,
 		projectById,
+		projectProgress,
 		projects,
 		tasks,
 		toggleTaskDone
@@ -267,10 +268,10 @@
 								>
 									{project.name}
 								</a>
-								<span class="text-xs font-medium text-neutral-400">{project.progress}%</span>
+								<span class="text-xs font-medium text-neutral-400">{projectProgress(project.id)}%</span>
 							</div>
 							<ProgressBar
-								value={project.progress}
+								value={projectProgress(project.id)}
 								color={projectAccents[project.color]?.bar ?? 'bg-indigo-500'}
 							/>
 						</li>

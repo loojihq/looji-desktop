@@ -1,13 +1,27 @@
 <script lang="ts">
 	import { page } from '$app/state';
+	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { ArrowLeft, CalendarDays, Plus, User } from '@lucide/svelte';
+	import { ArrowLeft, CalendarDays, Pencil, Plus, Trash2, User } from '@lucide/svelte';
 	import Avatar from '$lib/components/Avatar.svelte';
 	import Badge from '$lib/components/Badge.svelte';
+	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import ProgressBar from '$lib/components/ProgressBar.svelte';
+	import ProjectForm from '$lib/components/ProjectForm.svelte';
+	import TaskForm from '$lib/components/TaskForm.svelte';
 	import { projectAccents, priorityStyles, taskStatusStyles } from '$lib/badges';
-	import { createTask, memberById, members, moveTask, projects, tasks } from '$lib/store.svelte';
-	import type { Member, TaskStatus } from '$lib/types';
+	import {
+		createTask,
+		deleteProject,
+		deleteTask,
+		memberById,
+		members,
+		moveTask,
+		projectProgress,
+		projects,
+		tasks
+	} from '$lib/store.svelte';
+	import type { Member, Task, TaskStatus } from '$lib/types';
 	import { daysFromNow, dueLabel, formatDate, isOverdue } from '$lib/utils';
 
 	const project = $derived(projects.find((p) => p.slug === page.params.slug));
@@ -42,6 +56,10 @@
 	let addingStatus = $state<TaskStatus | null>(null);
 	let newTitle = $state('');
 	let newAssigneeId = $state('');
+	let editProject = $state(false);
+	let deleteProjectOpen = $state(false);
+	let editTask = $state<Task | null>(null);
+	let deleteTaskTarget = $state<Task | null>(null);
 
 	function handleAdd(status: TaskStatus) {
 		if (!project || !newTitle.trim()) return;
@@ -56,6 +74,19 @@
 		newTitle = '';
 		newAssigneeId = '';
 		addingStatus = null;
+	}
+
+	async function handleDeleteTask() {
+		if (!deleteTaskTarget) return;
+		await deleteTask(deleteTaskTarget.id);
+		deleteTaskTarget = null;
+	}
+
+	async function handleDeleteProject() {
+		if (!project) return;
+		await deleteProject(project.id);
+		deleteProjectOpen = false;
+		await goto('/projects');
 	}
 </script>
 
@@ -93,21 +124,39 @@
 				</div>
 				<p class="mt-2 max-w-2xl text-sm text-neutral-500">{project.description}</p>
 			</div>
-			<span
-				class="inline-flex items-center gap-1.5 rounded-lg bg-neutral-100 px-3 py-1.5 text-sm font-medium text-neutral-600"
-			>
-				<CalendarDays size={15} />
-				Due {formatDate(project.due)}
-			</span>
+			<div class="flex items-center gap-2">
+				<span
+					class="inline-flex items-center gap-1.5 rounded-lg bg-neutral-100 px-3 py-1.5 text-sm font-medium text-neutral-600"
+				>
+					<CalendarDays size={15} />
+					Due {formatDate(project.due)}
+				</span>
+				<button
+					type="button"
+					class="rounded-lg p-2 text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-700"
+					aria-label="Edit project"
+					onclick={() => (editProject = true)}
+				>
+					<Pencil size={15} />
+				</button>
+				<button
+					type="button"
+					class="rounded-lg p-2 text-neutral-400 transition-colors hover:bg-red-50 hover:text-red-600"
+					aria-label="Delete project"
+					onclick={() => (deleteProjectOpen = true)}
+				>
+					<Trash2 size={15} />
+				</button>
+			</div>
 		</div>
 
 		<div class="mt-6">
 			<div class="mb-1.5 flex items-center justify-between text-xs">
 				<span class="font-medium text-neutral-400">Progress</span>
-				<span class="font-semibold text-neutral-600">{project.progress}%</span>
+				<span class="font-semibold text-neutral-600">{projectProgress(project.id)}%</span>
 			</div>
 			<ProgressBar
-				value={project.progress}
+				value={projectProgress(project.id)}
 				color={projectAccents[project.color]?.bar ?? 'bg-indigo-500'}
 			/>
 		</div>
@@ -185,6 +234,26 @@
 										class="mt-1 size-1.5 shrink-0 rounded-full {priorityStyles[task.priority].dot}"
 									></span>
 									<p class="text-sm font-medium text-neutral-800">{task.title}</p>
+									<div
+										class="ml-auto flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+									>
+										<button
+											type="button"
+											class="rounded-md p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
+											aria-label="Edit {task.title}"
+											onclick={() => (editTask = task)}
+										>
+											<Pencil size={13} />
+										</button>
+										<button
+											type="button"
+											class="rounded-md p-1 text-neutral-400 hover:bg-red-50 hover:text-red-600"
+											aria-label="Delete {task.title}"
+											onclick={() => (deleteTaskTarget = task)}
+										>
+											<Trash2 size={13} />
+										</button>
+									</div>
 								</div>
 								{#if task.tags.length > 0}
 									<div class="mt-2 flex flex-wrap gap-1.5">
@@ -246,3 +315,22 @@
 		</div>
 	</section>
 {/if}
+
+<TaskForm open={editTask !== null} task={editTask} onClose={() => (editTask = null)} />
+<ConfirmDialog
+open={deleteTaskTarget !== null}
+title="Delete task?"
+message={`This will permanently delete "${deleteTaskTarget?.title ?? ''}".`}
+confirmLabel="Delete task"
+onConfirm={handleDeleteTask}
+onCancel={() => (deleteTaskTarget = null)}
+/>
+<ProjectForm open={editProject} project={project ?? null} onClose={() => (editProject = false)} />
+<ConfirmDialog
+open={deleteProjectOpen}
+title="Delete project?"
+message={`This will permanently delete "${project?.name ?? ''}" and all of its tasks.`}
+confirmLabel="Delete project"
+onConfirm={handleDeleteProject}
+onCancel={() => (deleteProjectOpen = false)}
+/>

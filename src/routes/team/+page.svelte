@@ -1,24 +1,19 @@
 <script lang="ts">
-	import { Mail, UserPlus, X } from '@lucide/svelte';
+	import { Mail, Pencil, Trash2, UserPlus } from '@lucide/svelte';
 	import Avatar from '$lib/components/Avatar.svelte';
-	import { addMember, members, tasks } from '$lib/store.svelte';
+	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+	import MemberForm from '$lib/components/MemberForm.svelte';
+	import { deleteMember, members, tasks } from '$lib/store.svelte';
+	import type { Member } from '$lib/types';
 
-	let showForm = $state(false);
-	let newName = $state('');
-	let newEmail = $state('');
-	let newRole = $state('Engineering');
+	let createOpen = $state(false);
+	let editTarget = $state<Member | null>(null);
+	let deleteTarget = $state<Member | null>(null);
 
-	async function handleAdd() {
-		if (!newName.trim() || !newEmail.trim()) return;
-		await addMember({
-			name: newName.trim(),
-			email: newEmail.trim(),
-			role: newRole
-		});
-		newName = '';
-		newEmail = '';
-		newRole = 'Engineering';
-		showForm = false;
+	async function handleDelete() {
+		if (!deleteTarget) return;
+		await deleteMember(deleteTarget.id);
+		deleteTarget = null;
 	}
 
 	const openCountFor = (id: string) =>
@@ -43,65 +38,13 @@
 	</div>
 	<button
 		type="button"
-		onclick={() => (showForm = !showForm)}
+		onclick={() => (createOpen = true)}
 		class="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-indigo-500"
 	>
-		{#if showForm}
-			<X size={16} />
-		{:else}
-			<UserPlus size={16} strokeWidth={2.25} />
-		{/if}
-		{showForm ? 'Cancel' : 'Add member'}
+		<UserPlus size={16} strokeWidth={2.25} />
+		Add member
 	</button>
 </div>
-
-{#if showForm}
-	<form
-		onsubmit={handleAdd}
-		class="mb-6 rounded-xl border border-indigo-200 bg-indigo-50/60 p-4 shadow-xs sm:flex sm:items-end sm:gap-3"
-	>
-		<div class="flex-1">
-			<label for="member-name" class="mb-1 block text-xs font-medium text-neutral-600">Name</label>
-			<input
-				id="member-name"
-				type="text"
-				placeholder="e.g. Jamie Lee"
-				class="w-full rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
-				bind:value={newName}
-				required
-			/>
-		</div>
-		<div class="flex-1">
-			<label for="member-email" class="mb-1 block text-xs font-medium text-neutral-600">Email</label>
-			<input
-				id="member-email"
-				type="email"
-				placeholder="jamie@company.com"
-				class="w-full rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
-				bind:value={newEmail}
-				required
-			/>
-		</div>
-		<div>
-			<label for="member-role" class="mb-1 block text-xs font-medium text-neutral-600">Role</label>
-			<select
-				id="member-role"
-				class="w-full rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
-				bind:value={newRole}
-			>
-				{#each ['Engineering', 'Design', 'Product', 'Marketing', 'Operations'] as role (role)}
-					<option value={role}>{role}</option>
-				{/each}
-			</select>
-		</div>
-		<button
-			type="submit"
-			class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500"
-		>
-			Add member
-		</button>
-	</form>
-{/if}
 
 {#if members.length === 0}
 	<div
@@ -111,7 +54,7 @@
 		<p class="mt-1 text-sm text-neutral-400">Add the people you work with to assign them tasks.</p>
 		<button
 			type="button"
-			onclick={() => (showForm = true)}
+			onclick={() => (createOpen = true)}
 			class="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500"
 		>
 			<UserPlus size={15} />
@@ -128,15 +71,24 @@
 						<p class="font-semibold tracking-tight text-neutral-900">{member.name}</p>
 						<p class="truncate text-sm text-neutral-500">{member.role}</p>
 					</div>
-					<span
-						class="ml-auto inline-flex shrink-0 items-center gap-1.5 text-xs font-medium {member.online
-							? 'text-emerald-600'
-							: 'text-neutral-400'}"
-					>
-						<span class="size-2 rounded-full {member.online ? 'bg-emerald-500' : 'bg-neutral-300'}"
-						></span>
-						{member.online ? 'Online' : 'Offline'}
-					</span>
+					<div class="ml-auto flex shrink-0 items-center gap-0.5">
+						<button
+							type="button"
+							class="rounded-md p-1.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
+							aria-label="Edit {member.name}"
+							onclick={() => (editTarget = member)}
+						>
+							<Pencil size={14} />
+						</button>
+						<button
+							type="button"
+							class="rounded-md p-1.5 text-neutral-400 hover:bg-red-50 hover:text-red-600"
+							aria-label="Remove {member.name}"
+							onclick={() => (deleteTarget = member)}
+						>
+							<Trash2 size={14} />
+						</button>
+					</div>
 				</div>
 
 				<p class="mt-4 flex items-center gap-1.5 text-sm text-neutral-500">
@@ -158,3 +110,14 @@
 		{/each}
 	</div>
 {/if}
+
+<MemberForm open={createOpen} onClose={() => (createOpen = false)} />
+<MemberForm open={editTarget !== null} member={editTarget} onClose={() => (editTarget = null)} />
+<ConfirmDialog
+	open={deleteTarget !== null}
+	title="Remove member?"
+	message={`This will remove "${deleteTarget?.name ?? ''}" and leave their tasks unassigned.`}
+	confirmLabel="Remove member"
+	onConfirm={handleDelete}
+	onCancel={() => (deleteTarget = null)}
+/>
