@@ -3,7 +3,6 @@
 	import Avatar from '$lib/components/Avatar.svelte';
 	import Badge from '$lib/components/Badge.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
-	import TaskForm from '$lib/components/TaskForm.svelte';
 	import { priorityStyles, projectAccents, taskStatusStyles } from '$lib/badges';
 	import {
 		createTask,
@@ -13,7 +12,8 @@
 		projectById,
 		projects,
 		tasks,
-		toggleTaskDone
+		toggleTaskDone,
+		updateTask
 	} from '$lib/store.svelte';
 	import { priorities, taskStatuses, type Priority, type Task, type TaskStatus } from '$lib/types';
 	import { daysFromNow, dueLabel, isOverdue } from '$lib/utils';
@@ -27,9 +27,57 @@
 	let newProjectId = $state('');
 	let newAssigneeId = $state('');
 	let newPriority = $state<Priority>('medium');
-	let createOpen = $state(false);
-	let editTarget = $state<Task | null>(null);
 	let deleteTarget = $state<Task | null>(null);
+
+	let editTarget = $state<Task | null>(null);
+	let editTitle = $state('');
+	let editProjectId = $state('');
+	let editStatus = $state<TaskStatus>('todo');
+	let editPriority = $state<Priority>('medium');
+	let editAssigneeId = $state('');
+	let editDue = $state('');
+	let editTags = $state('');
+	let editError = $state('');
+
+	function startEdit(task: Task) {
+		editTarget = task;
+		editTitle = task.title;
+		editProjectId = task.projectId;
+		editStatus = task.status;
+		editPriority = task.priority;
+		editAssigneeId = task.assigneeId ?? '';
+		editDue = task.due.slice(0, 10);
+		editTags = task.tags.join(', ');
+		editError = '';
+	}
+
+	function cancelEdit() {
+		editTarget = null;
+		editError = '';
+	}
+
+	async function handleEditSave() {
+		if (!editTarget || !editTitle.trim() || !editProjectId) return;
+		editError = '';
+		try {
+			await updateTask(editTarget.id, {
+				title: editTitle.trim(),
+				projectId: editProjectId,
+				status: editStatus,
+				priority: editPriority,
+				assigneeId: editAssigneeId || null,
+				due: editDue ? new Date(`${editDue}T12:00:00`).toISOString() : daysFromNow(7),
+				tags: editTags
+					.split(',')
+					.map((tag) => tag.trim())
+					.filter(Boolean)
+			});
+			cancelEdit();
+		} catch (err) {
+			console.error('Failed to save task', err);
+			editError = err instanceof Error ? err.message : String(err);
+		}
+	}
 
 	$effect(() => {
 		if (!newProjectId && projects[0]) newProjectId = projects[0].id;
@@ -84,63 +132,171 @@
 	</p>
 </div>
 
-<div class="mb-4 flex items-center justify-between">
-	<form class="flex flex-1 flex-wrap items-center gap-2" onsubmit={handleQuickAdd}>
-	<div class="relative min-w-64 flex-1">
-		<Plus
-			size={16}
-			class="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-neutral-400"
-		/>
-		<input
-			type="text"
-			placeholder="Add a task"
-			class="w-full rounded-lg border-neutral-300 py-2 pr-3 pl-9 text-sm focus:border-indigo-500 focus:ring-indigo-500"
-			bind:value={newTitle}
-		/>
-	</div>
-	<select
-		class="rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
-		bind:value={newProjectId}
-		aria-label="Project"
-	>
-		{#each projects as project (project.id)}
-			<option value={project.id}>{project.name}</option>
-		{/each}
-	</select>
-	<select
-		class="rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
-		bind:value={newPriority}
-		aria-label="Priority"
-	>
-		{#each priorities as priority (priority)}
-			<option value={priority}>{priorityStyles[priority].label}</option>
-		{/each}
-	</select>
-	<select
-		class="rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
-		bind:value={newAssigneeId}
-		aria-label="Assignee"
-	>
-		<option value="">Unassigned</option>
-		{#each members as member (member.id)}
-			<option value={member.id}>{member.name}</option>
-		{/each}
-	</select>
-	<button
-		type="submit"
-		class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500"
-	>
-		Add task
-	</button>
-</form>
-	<button
-		type="button"
-		onclick={() => (createOpen = true)}
-		class="ml-2 inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm font-medium text-neutral-700 transition-colors hover:bg-neutral-50"
-	>
-		<Plus size={15} />
-		New task
-	</button>
+<div class="mb-4">
+	{#if editTarget}
+		<form
+			onsubmit={handleEditSave}
+			class="rounded-xl border border-indigo-200 bg-indigo-50/60 p-4 shadow-xs"
+		>
+			<div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+				<div class="lg:col-span-3">
+					<label for="edit-title" class="mb-1 block text-xs font-medium text-neutral-600">Title</label>
+					<input
+						id="edit-title"
+						type="text"
+						class="w-full rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
+						bind:value={editTitle}
+						required
+					/>
+				</div>
+				<div>
+					<label for="edit-project" class="mb-1 block text-xs font-medium text-neutral-600">
+						Project
+					</label>
+					<select
+						id="edit-project"
+						class="w-full rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
+						bind:value={editProjectId}
+					>
+						{#each projects as project (project.id)}
+							<option value={project.id}>{project.name}</option>
+						{/each}
+					</select>
+				</div>
+				<div>
+					<label for="edit-status" class="mb-1 block text-xs font-medium text-neutral-600">
+						Status
+					</label>
+					<select
+						id="edit-status"
+						class="w-full rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
+						bind:value={editStatus}
+					>
+						{#each taskStatuses as status (status)}
+							<option value={status}>{taskStatusStyles[status].label}</option>
+						{/each}
+					</select>
+				</div>
+				<div>
+					<label for="edit-priority" class="mb-1 block text-xs font-medium text-neutral-600">
+						Priority
+					</label>
+					<select
+						id="edit-priority"
+						class="w-full rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
+						bind:value={editPriority}
+					>
+						{#each priorities as priority (priority)}
+							<option value={priority}>{priorityStyles[priority].label}</option>
+						{/each}
+					</select>
+				</div>
+				<div>
+					<label for="edit-assignee" class="mb-1 block text-xs font-medium text-neutral-600">
+						Assignee
+					</label>
+					<select
+						id="edit-assignee"
+						class="w-full rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
+						bind:value={editAssigneeId}
+					>
+						<option value="">Unassigned</option>
+						{#each members as member (member.id)}
+							<option value={member.id}>{member.name}</option>
+						{/each}
+					</select>
+				</div>
+				<div>
+					<label for="edit-due" class="mb-1 block text-xs font-medium text-neutral-600">Due date</label>
+					<input
+						id="edit-due"
+						type="date"
+						class="w-full rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
+						bind:value={editDue}
+					/>
+				</div>
+				<div>
+					<label for="edit-tags" class="mb-1 block text-xs font-medium text-neutral-600">
+						Tags (comma separated)
+					</label>
+					<input
+						id="edit-tags"
+						type="text"
+						placeholder="e.g. frontend, bug"
+						class="w-full rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
+						bind:value={editTags}
+					/>
+				</div>
+			</div>
+			{#if editError}
+				<p class="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{editError}</p>
+			{/if}
+			<div class="mt-4 flex items-center gap-2">
+				<button
+					type="submit"
+					class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500"
+				>
+					Save changes
+				</button>
+				<button
+					type="button"
+					class="rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm font-medium text-neutral-600 transition-colors hover:bg-neutral-50"
+					onclick={cancelEdit}
+				>
+					Cancel
+				</button>
+			</div>
+		</form>
+	{:else}
+		<form class="flex flex-wrap items-center gap-2" onsubmit={handleQuickAdd}>
+			<div class="relative min-w-64 flex-1">
+				<Plus
+					size={16}
+					class="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-neutral-400"
+				/>
+				<input
+					type="text"
+					placeholder="Add a task"
+					class="w-full rounded-lg border-neutral-300 py-2 pr-3 pl-9 text-sm focus:border-indigo-500 focus:ring-indigo-500"
+					bind:value={newTitle}
+				/>
+			</div>
+			<select
+				class="rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
+				bind:value={newProjectId}
+				aria-label="Project"
+			>
+				{#each projects as project (project.id)}
+					<option value={project.id}>{project.name}</option>
+				{/each}
+			</select>
+			<select
+				class="rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
+				bind:value={newPriority}
+				aria-label="Priority"
+			>
+				{#each priorities as priority (priority)}
+					<option value={priority}>{priorityStyles[priority].label}</option>
+				{/each}
+			</select>
+			<select
+				class="rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
+				bind:value={newAssigneeId}
+				aria-label="Assignee"
+			>
+				<option value="">Unassigned</option>
+				{#each members as member (member.id)}
+					<option value={member.id}>{member.name}</option>
+				{/each}
+			</select>
+			<button
+				type="submit"
+				class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500"
+			>
+				Add task
+			</button>
+		</form>
+	{/if}
 </div>
 
 <div class="mb-4 flex flex-wrap items-center gap-3">
@@ -284,7 +440,7 @@
 									type="button"
 									class="rounded-md p-1.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
 									aria-label="Edit {task.title}"
-									onclick={() => (editTarget = task)}
+									onclick={() => startEdit(task)}
 								>
 									<Pencil size={14} />
 								</button>
@@ -315,8 +471,6 @@
 	</div>
 </div>
 
-<TaskForm open={createOpen} onClose={() => (createOpen = false)} />
-<TaskForm open={editTarget !== null} task={editTarget} onClose={() => (editTarget = null)} />
 <ConfirmDialog
 	open={deleteTarget !== null}
 	title="Delete task?"
