@@ -10,7 +10,7 @@
 	import Markdown from '$lib/components/Markdown.svelte';
 	import ProgressBar from '$lib/components/ProgressBar.svelte';
 	import Select from '$lib/components/Select.svelte';
-	import { checkTaskAgainstRepo, explainTask, generateAiDraft, suggestSpecialties, taskChatFollowUp, type RepoContext, type TaskChatMessage, type TaskContext } from '$lib/ai';
+	import { checkTaskAgainstRepo, explainTask, generateAiDraft, suggestSpecialties, taskChatFollowUp, type AiDraftStatus, type RepoContext, type TaskChatMessage, type TaskContext } from '$lib/ai';
 	import { exportDraftPdf, exportProjectPdf } from '$lib/pdf';
 	import {
 		extractSymbols,
@@ -901,7 +901,8 @@
 	let aiDraft = $state<AiDraft | null>(null);
 	let aiPublished = $state(false);
 	let aiNeedsKey = $state(false);
-	let aiStatusMessage = $state('');
+	let aiStatus = $state<AiDraftStatus | null>(null);
+	let aiRepoEnabled = $state(true);
 	let newStory = $state('');
 	let draftLoaded = $state(false);
 
@@ -968,28 +969,10 @@
 		});
 	}
 
-	const aiStatusMessages = [
-		'Understanding your request…',
-		'Planning the spec…',
-		'Writing user stories…',
-		'Breaking down tasks…'
-	];
-
 	const selectedAiMembers = $derived(members.filter((m) => aiIncluded[m.id]));
 	const draftTotalEstimate = $derived(
 		aiDraft ? aiDraft.tasks.reduce((sum, t) => sum + (t.estimateHours ?? 0), 0) : 0
 	);
-
-	$effect(() => {
-		if (!aiLoading) return;
-		let i = 0;
-		aiStatusMessage = aiStatusMessages[0];
-		const timer = setInterval(() => {
-			i = (i + 1) % aiStatusMessages.length;
-			aiStatusMessage = aiStatusMessages[i];
-		}, 2200);
-		return () => clearInterval(timer);
-	});
 
 	function openAiPanel() {
 		if (!project) return;
@@ -1030,6 +1013,22 @@
 		}
 	}
 
+	/** Builds repo context for the project-level AI draft (keywords from the
+	 *  project + desires). Returns null when no repo is connected/readable. */
+	async function ensureProjectRepoContext(): Promise<RepoContext | null> {
+		if (!project?.repoPath || !aiRepoEnabled) return null;
+		if (!repoScan && !repoScanning) await scanProjectRepo();
+		if (!repoScan || repoScan.error) return null;
+		const keywords = [project.name, project.description, aiDesires].filter((k) => k.trim());
+		const hunks = await readRelevantHunks(repoScan.root, repoScan.files, repoSymbols, keywords);
+		return {
+			root: repoScan.root,
+			tree: repoTreeText(repoScan.files),
+			map: repoMapText(repoSymbols),
+			contents: hunks
+		};
+	}
+
 	async function handleAiGenerate(refine = false) {
 		if (!project) return;
 		if (!settings.aiApiKey) {
@@ -1043,7 +1042,9 @@
 		aiLoading = true;
 		aiError = '';
 		aiPublished = false;
+		aiStatus = null;
 		try {
+			const repo = await ensureProjectRepoContext();
 			const draft = await generateAiDraft({
 				projectName: project.name,
 				projectDescription: project.description,
@@ -1056,7 +1057,9 @@
 				existingTitles: tasks.filter((t) => t.projectId === project.id).map((t) => t.title),
 				apiKey: settings.aiApiKey,
 				model: settings.aiModel,
-				currentDraft: refine && aiDraft ? aiDraft : undefined
+				currentDraft: refine && aiDraft ? aiDraft : undefined,
+				repo: repo ?? undefined,
+				onStatus: (s) => (aiStatus = s)
 			});
 			if (draft.tasks.length === 0 && !draft.spec && draft.userStories.length === 0) {
 				aiError = 'The AI returned an empty plan. Try rephrasing your desires.';
@@ -1067,6 +1070,7 @@
 			}
 		} catch (err) {
 			aiError = err instanceof Error ? err.message : String(err);
+			aiStatus = null;
 		} finally {
 			aiLoading = false;
 		}
@@ -1919,6 +1923,20 @@
 				</div>
 
 				<div class="mt-4 flex items-center gap-2">
+					{#if project?.repoPath}
+						<label
+							class="flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-surface px-3 py-2 text-sm text-neutral-600 transition-colors hover:bg-neutral-50"
+							title="Include the connected repository's file tree, symbol map and relevant snippets so the plan builds on the existing code"
+						>
+							<input
+								type="checkbox"
+								class="size-4 rounded border-neutral-300 text-indigo-600 focus:ring-indigo-500"
+								bind:checked={aiRepoEnabled}
+							/>
+							<FolderGit2 size={13} class="text-neutral-400" />
+							Repo context
+						</label>
+					{/if}
 					<button
 						type="button"
 						class="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
@@ -1964,7 +1982,7 @@
 					<div
 						class="mt-4 flex items-center gap-3 rounded-lg border border-indigo-200 bg-indigo-50/60 px-4 py-3"
 					>
-						<span class="flex items-center gap-1">
+						<span class="flex shrink-0 items-center gap-1">
 							<span class="size-1.5 animate-pulse rounded-full bg-indigo-400"></span>
 							<span
 								class="size-1.5 animate-pulse rounded-full bg-indigo-500"
@@ -1975,7 +1993,19 @@
 								style="animation-delay: 300ms"
 							></span>
 						</span>
-						<p class="text-sm font-medium text-indigo-700">{aiStatusMessage}</p>
+						<div class="min-w-0">
+							<p class="text-sm font-medium text-indigo-700">
+								{aiStatus?.message ?? 'Working…'}
+							</p>
+							{#if aiStatus?.stage === 'tasks' && aiStatus.tasks}
+								<div class="mt-1.5 h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-indigo-100">
+									<div
+										class="h-full rounded-full bg-indigo-500 transition-[width] duration-300"
+										style="width: {Math.min(96, aiStatus.tasks * 4)}%"
+									></div>
+								</div>
+							{/if}
+						</div>
 					</div>
 				{/if}
 			{/if}

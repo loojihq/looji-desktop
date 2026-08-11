@@ -10,6 +10,13 @@ type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string };
 
 type ChatResult = { content: string; finishReason: string };
 
+/** Live progress reported while the AI plan is being generated. */
+export type AiDraftStatus = {
+	stage: 'analyzing' | 'spec' | 'stories' | 'tasks' | 'continuing' | 'done';
+	message: string;
+	tasks?: number;
+};
+
 async function chat(
 	apiKey: string,
 	model: string,
@@ -140,6 +147,8 @@ export async function generateAiDraft(input: {
 	apiKey: string;
 	model: string;
 	currentDraft?: AiDraft;
+	repo?: RepoContext;
+	onStatus?: (status: AiDraftStatus) => void;
 }): Promise<AiDraft> {
 	const memberLines =
 		input.members.length > 0
@@ -171,9 +180,10 @@ export async function generateAiDraft(input: {
 - Size the total honestly: the combined estimate_hours across all tasks should match the project's scope, team size and target date — not more, not less.
 - Keep each task's description tight (2-3 sentences: what to do, how to verify, edge cases) so the backlog stays efficient.
 - Every task MUST include estimate_hours as a plain JSON number (e.g. 3, 2.5, 8) — never a string like "3h" or "1-2 days".
-- Only assign tasks to member names from the provided team list; otherwise null.
-- Use only the allowed priority values.
-- Do not duplicate any existing task titles.`;
+	- Only assign tasks to member names from the provided team list; otherwise null.
+	- Use only the allowed priority values.
+	- Do not duplicate any existing task titles.
+	- When local repository context is provided, ground the plan in it: prefer tasks that build on the existing files and structure shown, and do not propose re-implementing what already exists in the repo.`;
 
 	const systemPrompt = revising
 		? `You are a senior product manager and technical lead. The user has manually edited a previously generated plan. Revise it: preserve every manual edit, keep the plan internally consistent, fill gaps, resolve contradictions and improve the backlog where it makes sense. Return the COMPLETE revised plan. You reply only with valid JSON and nothing else.
@@ -231,7 +241,7 @@ Team members:
 ${memberLines}
 
 Existing task titles (do not duplicate):
-${existing}`;
+${existing}${input.repo ? repoPromptText(input.repo) : ''}`;
 
 	const continuationPrompt = (usedTitles: string[]) =>
 		`You were cut off while generating the plan. Continue from where you stopped and produce MORE tasks following the same schema (title, description, priority, tags, estimate_hours, assignee).
@@ -256,6 +266,15 @@ ${
 	let lastError: unknown = null;
 	for (let call = 0; call < MAX_CALLS; call++) {
 		const isContinuation = call > 0;
+		input.onStatus?.({
+			stage: isContinuation ? 'continuing' : 'analyzing',
+			message: isContinuation
+				? `The plan was cut off — extending it (round ${call + 1} of ${MAX_CALLS})…`
+				: revising
+					? 'Analyzing your edits and refining the plan…'
+					: 'Analyzing your requirements and the repository…',
+			tasks: tasks.length
+		});
 		const userContent = isContinuation
 			? `${baseUserContent}\n\n${continuationPrompt([...seenTitles])}`
 			: revising
@@ -267,17 +286,35 @@ ${
 		let content = '';
 		let finishReason = '';
 		try {
-			const result = await chat(
+			// Stream the response so the UI can show live progress (e.g. the
+			// task count ticking up as each task object streams in).
+			let streamBuffer = '';
+			let lastReported = -1;
+			const streamResult = await streamChat(
 				input.apiKey,
 				input.model,
 				[
 					{ role: 'system', content: systemPrompt },
 					{ role: 'user', content: userContent }
 				],
-				true
+				(delta) => {
+					streamBuffer += delta;
+					const count = (streamBuffer.match(/"title"\s*:/g) || []).length;
+					if (count !== lastReported) {
+						lastReported = count;
+						input.onStatus?.({
+							stage: 'tasks',
+							message:
+								count > 0
+									? `Writing the task backlog — ${count} task${count === 1 ? '' : 's'} so far…`
+									: 'Writing the task backlog…',
+							tasks: tasks.length + count
+						});
+					}
+				}
 			);
-			content = result.content;
-			finishReason = result.finishReason;
+			content = streamResult.content;
+			finishReason = streamResult.finishReason;
 		} catch (err) {
 			lastError = err;
 			continue; // a single failed call shouldn't abort the whole draft
@@ -298,6 +335,7 @@ ${
 			if (call === 0) {
 				if (typeof parsed.spec === 'string' && parsed.spec.trim()) {
 					spec.push(parsed.spec.trim());
+					input.onStatus?.({ stage: 'spec', message: 'Specification written.', tasks: tasks.length });
 				}
 				if (Array.isArray(parsed.userStories)) {
 					userStories.push(
@@ -306,6 +344,13 @@ ${
 							.map((s) => s.trim())
 							.filter(Boolean)
 					);
+					if (userStories.length > 0) {
+						input.onStatus?.({
+							stage: 'stories',
+							message: `${userStories.length} user stor${userStories.length === 1 ? 'y' : 'ies'} written.`,
+							tasks: tasks.length
+						});
+					}
 				}
 			}
 			for (const task of parseDraftTasks(parsed)) {
@@ -326,6 +371,12 @@ ${
 			'The AI response could not be parsed (it may have been cut off). Try again, or describe a smaller slice of the project and refine iteratively.'
 		);
 	}
+
+	input.onStatus?.({
+		stage: 'done',
+		message: `Plan complete — ${tasks.length} task${tasks.length === 1 ? '' : 's'}, ${userStories.length} user stor${userStories.length === 1 ? 'y' : 'ies'}.`,
+		tasks: tasks.length
+	});
 
 	return { spec: spec[0] ?? '', userStories, tasks };
 }
@@ -375,6 +426,17 @@ const TASK_SYSTEM_PROMPT =
 const TASK_CHAT_SYSTEM_PROMPT =
 	'You are a senior software engineer and mentor having a focused conversation about one task in a project. The context above and the earlier exchange describe the project, the task, related tasks, and what has already been discussed. Answer the user\'s latest question directly and specifically. Do not re-explain the task, restate the project, repeat the context, or recap earlier answers unless the question explicitly asks for it. Be practical, specific, and concise.';
 
+/** Renders the repository context block (tree + symbol map + snippets) into a prompt. */
+function repoPromptText(repo: RepoContext): string {
+	let block = `\n\nLocal repository at: ${repo.root}\nFile tree:\n${repo.tree}\n\nSymbol map (file: functions/classes/types):\n${repo.map}`;
+	if (repo.contents.length > 0) {
+		block += `\n\nRelevant file snippets (paths are absolute on the machine):\n${repo.contents
+			.map((f) => `### ${f.path}\n${f.content}`)
+			.join('\n\n')}`;
+	}
+	return block;
+}
+
 /** Builds the context message describing the project, the task and its neighbours. */
 function buildTaskContext(context: TaskContext): string {
 	const taskLines = [
@@ -393,15 +455,6 @@ function buildTaskContext(context: TaskContext): string {
 					.map((t) => `- ${t.title} — ${t.status}${t.assignee ? ` — ${t.assignee}` : ''}`)
 					.join('\n')
 			: '- none';
-	let repoBlock = '';
-	if (context.repo) {
-		repoBlock = `\n\nLocal repository at: ${context.repo.root}\nFile tree:\n${context.repo.tree}\n\nSymbol map (file: functions/classes/types):\n${context.repo.map}`;
-		if (context.repo.contents.length > 0) {
-			repoBlock += `\n\nRelevant file snippets (paths are absolute on the machine):\n${context.repo.contents
-				.map((f) => `### ${f.path}\n${f.content}`)
-				.join('\n\n')}`;
-		}
-	}
 	return `Project: ${context.projectName}
 Project description: ${context.projectDescription || '(none)'}
 
@@ -409,7 +462,7 @@ The task to explain:
 ${taskLines}
 
 Other tasks in this project (title — status — assignee):
-${others}${repoBlock}`;
+${others}${context.repo ? repoPromptText(context.repo) : ''}`;
 }
 
 /**
@@ -422,7 +475,7 @@ async function streamChat(
 	messages: ChatMessage[],
 	onDelta: (delta: string) => void,
 	signal?: AbortSignal
-): Promise<string> {
+): Promise<ChatResult> {
 	const response = await fetch(DEEPSEEK_URL, {
 		method: 'POST',
 		headers: {
@@ -488,7 +541,7 @@ async function streamChat(
 			`DeepSeek returned an empty response (finish_reason: ${finishReason}). Try again.`
 		);
 	}
-	return full;
+	return { content: full, finishReason };
 }
 
 /**
@@ -501,7 +554,7 @@ export async function explainTask(input: TaskContext & {
 	onDelta?: (delta: string) => void;
 	signal?: AbortSignal;
 }): Promise<string> {
-	const content = await streamChat(
+	const result = await streamChat(
 		input.apiKey,
 		input.model,
 		[
@@ -520,7 +573,7 @@ Explain the task for the person doing it:
 		input.onDelta ?? (() => {}),
 		input.signal
 	);
-	return content.trim();
+	return result.content.trim();
 }
 
 /**
@@ -545,14 +598,14 @@ export async function taskChatFollowUp(input: {
 			content: `${input.question}\n\nAnswer only this question — do not re-explain the task or project.`
 		}
 	];
-	const content = await streamChat(
+	const result = await streamChat(
 		input.apiKey,
 		input.model,
 		messages,
 		input.onDelta ?? (() => {}),
 		input.signal
 	);
-	return content.trim();
+	return result.content.trim();
 }
 
 const REPO_CHECK_SYSTEM_PROMPT =
@@ -569,7 +622,7 @@ export async function checkTaskAgainstRepo(input: {
 	onDelta?: (delta: string) => void;
 	signal?: AbortSignal;
 }): Promise<string> {
-	const content = await streamChat(
+	const result = await streamChat(
 		input.apiKey,
 		input.model,
 		[
@@ -590,7 +643,7 @@ Base your assessment ONLY on the file tree, symbol map and snippets provided abo
 		input.onDelta ?? (() => {}),
 		input.signal
 	);
-	return content.trim();
+	return result.content.trim();
 }
 
 /** Lists the models available to the given API key (OpenAI-compatible /models endpoint). */
