@@ -500,14 +500,44 @@
 		await generateExplanation(task);
 	}
 
-	/** Discards the saved conversation and regenerates a fresh explanation. */
+	/** Starts a blank chat: discards the saved conversation and shows
+	 *  suggestion prompts. Nothing is generated until the user asks. */
 	async function newExplanation() {
 		if (!explainTarget || explainBusy) return;
 		await clearTaskExplanation(explainTarget.id);
 		const remaining = new Set(explainedTaskIds);
 		remaining.delete(explainTarget.id);
 		explainedTaskIds = remaining;
-		await generateExplanation(explainTarget);
+		explainMessages = [];
+		explainPending = '';
+		explainError = '';
+	}
+
+	/** Contextual prompts shown while the chat is empty, so the user has a
+	 *  starting point without the AI generating anything yet. */
+	function explainSuggestions(task: Task): string[] {
+		const out: string[] = [];
+		const assignee = memberById(task.assigneeId);
+		if (!task.description) {
+			out.push('I have no description for this task — what should it involve?');
+		} else {
+			out.push('What does this task actually require, in plain language?');
+		}
+		out.push('How should I implement this step by step?');
+		out.push(
+			assignee
+				? `How should ${assignee.name} approach this?`
+				: 'Who would be the best person to work on this?'
+		);
+		if (task.estimate) {
+			out.push(`Is ${formatEstimate(task.estimate)} enough time for this?`);
+		}
+		if (projectTasks.some((t) => t.id !== task.id)) {
+			out.push('Which other tasks does this depend on, and which depend on it?');
+		} else {
+			out.push('What are the risks or edge cases to watch for?');
+		}
+		return out.slice(0, 4);
 	}
 
 	/** Number of user questions that are still waiting for an answer. */
@@ -524,8 +554,14 @@
 	 *  streaming, the question is shown immediately and queued for answering. */
 	function sendFollowUp() {
 		const raw = explainInput.trim();
-		if (!raw || !explainTarget || !settings.aiApiKey) return;
-		const question = formatUserMessage(raw);
+		if (!raw) return;
+		sendFollowUpText(raw);
+	}
+
+	/** Appends the question to the conversation and starts answering it. */
+	function sendFollowUpText(raw: string) {
+		if (!raw.trim() || !explainTarget || !settings.aiApiKey) return;
+		const question = formatUserMessage(raw.trim());
 		explainInput = '';
 		explainError = '';
 		explainMessages = [...explainMessages, { role: 'user', content: question }];
@@ -2447,7 +2483,9 @@
 						{explainTarget.title}
 					</h2>
 					<p class="mt-0.5 text-xs text-neutral-500">
-						AI-assisted walkthrough — ask follow-ups, the full project and task context is kept.
+						{explainMessages.length === 0
+							? 'Ask anything about this task — pick a suggestion or type below.'
+							: 'AI-assisted walkthrough — ask follow-ups, the full project and task context is kept.'}
 					</p>
 				</div>
 				<div class="flex shrink-0 items-center gap-1">
@@ -2473,6 +2511,35 @@
 			</header>
 
 			<div class="flex-1 space-y-3 overflow-y-auto px-5 py-4" bind:this={conversationEl}>
+				{#if explainMessages.length === 0 && !explainBusy}
+					<div class="space-y-3">
+						<div class="flex items-start gap-2.5">
+							<span
+								class="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-lg bg-indigo-600 text-white"
+							>
+								<Sparkles size={12} />
+							</span>
+							<div
+								class="max-w-[85%] rounded-xl rounded-tl-sm border border-indigo-100 bg-indigo-50/60 px-3.5 py-2.5 text-sm text-neutral-700"
+							>
+								Start a new conversation about this task — nothing is generated until
+								you ask.
+							</div>
+						</div>
+						<p class="text-xs font-medium text-neutral-500">Try asking:</p>
+						<div class="flex flex-wrap gap-2">
+							{#each explainSuggestions(explainTarget) as suggestion (suggestion)}
+								<button
+									type="button"
+									class="rounded-lg border border-indigo-200 bg-indigo-50/60 px-3 py-1.5 text-left text-xs font-medium text-indigo-700 transition-colors hover:bg-indigo-100"
+									onclick={() => sendFollowUpText(suggestion)}
+								>
+									{suggestion}
+								</button>
+							{/each}
+						</div>
+					</div>
+				{/if}
 				{#each explainMessages as message, i (i)}
 					{#if message.role === 'assistant'}
 						<div class="flex items-start gap-2.5">
