@@ -128,7 +128,7 @@ export const settings = $state<Settings>({
 	aiApiKey: '',
 	aiModel: 'deepseek-chat',
 	aiModels: [],
-	boardStatuses: ['todo', 'in_progress', 'done']
+	boardStatuses: ['todo', 'in_progress', 'in_review', 'done']
 });
 
 function requireDb(): Database {
@@ -711,9 +711,17 @@ export async function moveTask(taskId: string, status: TaskStatus): Promise<void
 	if (status === 'in_progress' && task.estimate && task.estimate > 0) {
 		originalDue = beforeDue;
 		due = addWorkingHours(new Date(), task.estimate, workStart, workEnd, workDays).toISOString();
-	} else if ((status === 'todo' || status === 'backlog') && task.originalDue) {
-		due = task.originalDue;
-		originalDue = '';
+	} else if (status === 'todo' || status === 'backlog') {
+		// Moving back out of progress resets the due date to the pre-recalc
+		// value. Tasks that never recorded one (e.g. created before the
+		// original_due column existed) reset to the project's target date.
+		if (task.originalDue) {
+			due = task.originalDue;
+			originalDue = '';
+		} else if (previous === 'in_progress' || previous === 'in_review') {
+			due = project?.due || beforeDue;
+			originalDue = '';
+		}
 	}
 
 	await database.execute(

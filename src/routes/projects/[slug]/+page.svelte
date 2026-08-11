@@ -612,6 +612,18 @@
 		}
 	}
 
+	/** Aborts the in-flight response and drops queued (unanswered) questions so
+	 *  nothing continues after the stop press. */
+	function stopExplain() {
+		explainAbort?.abort();
+		let end = explainMessages.length;
+		while (end > 0 && explainMessages[end - 1].role === 'user') end--;
+		if (end < explainMessages.length) {
+			explainMessages = explainMessages.slice(0, end);
+		}
+		explainPending = '';
+	}
+
 	function closeExplain() {
 		explainAbort?.abort();
 		explainTarget = null;
@@ -2522,8 +2534,7 @@
 							<div
 								class="max-w-[85%] rounded-xl rounded-tl-sm border border-indigo-100 bg-indigo-50/60 px-3.5 py-2.5 text-sm text-neutral-700"
 							>
-								Start a new conversation about this task — nothing is generated until
-								you ask.
+								Start a new conversation about this task.
 							</div>
 						</div>
 						<p class="text-xs font-medium text-neutral-500">Try asking:</p>
@@ -2619,7 +2630,11 @@
 					class="flex items-end gap-2"
 					onsubmit={(event) => {
 						event.preventDefault();
-						sendFollowUp();
+						if (explainBusy) {
+							stopExplain();
+						} else {
+							sendFollowUp();
+						}
 					}}
 				>
 					<select
@@ -2653,13 +2668,24 @@
 							el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
 						}}
 					></textarea>
-					<button
-						type="submit"
-						class="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-lg bg-indigo-600 px-3.5 text-sm font-medium text-white transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
-						disabled={!explainInput.trim() || !settings.aiApiKey}
-					>
-						Send
-					</button>
+					{#if explainBusy}
+						<button
+							type="submit"
+							class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-neutral-200 bg-white text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-700"
+							title="Stop generating"
+							aria-label="Stop generating"
+						>
+							<span class="size-2.5 rounded-[2px] bg-current"></span>
+						</button>
+					{:else}
+						<button
+							type="submit"
+							class="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-indigo-600 px-3.5 text-sm font-medium text-white transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
+							disabled={!explainInput.trim() || !settings.aiApiKey}
+						>
+							Send
+						</button>
+					{/if}
 				</form>
 				<div class="mt-2 flex items-center justify-between">
 					<p class="text-[11px] text-neutral-400">

@@ -188,6 +188,12 @@ pub fn run() {
             )",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 22,
+            description: "default_board_statuses_to_four",
+            sql: r#"UPDATE settings SET value = '["todo","in_progress","in_review","done"]' WHERE key = 'boardStatuses' AND value = '["todo","in_progress","done"]'"#,
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()

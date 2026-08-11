@@ -362,6 +362,11 @@ export type TaskChatMessage = { role: 'user' | 'assistant'; content: string };
 const TASK_SYSTEM_PROMPT =
 	'You are a senior software engineer and mentor. You explain tasks clearly and practically in plain text, using short paragraphs and bullet points. Be specific and actionable.';
 
+// Follow-up chat uses a different system prompt: the model must answer the
+// exact question asked and not re-explain the task or restate the context.
+const TASK_CHAT_SYSTEM_PROMPT =
+	'You are a senior software engineer and mentor having a focused conversation about one task in a project. The context above and the earlier exchange describe the project, the task, related tasks, and what has already been discussed. Answer the user\'s latest question directly and specifically. Do not re-explain the task, restate the project, repeat the context, or recap earlier answers unless the question explicitly asks for it. Be practical, specific, and concise.';
+
 /** Builds the context message describing the project, the task and its neighbours. */
 function buildTaskContext(context: TaskContext): string {
 	const taskLines = [
@@ -515,10 +520,13 @@ export async function taskChatFollowUp(input: {
 	signal?: AbortSignal;
 }): Promise<string> {
 	const messages: ChatMessage[] = [
-		{ role: 'system', content: TASK_SYSTEM_PROMPT },
+		{ role: 'system', content: TASK_CHAT_SYSTEM_PROMPT },
 		{ role: 'user', content: buildTaskContext(input.context) },
 		...input.history.map((m) => ({ role: m.role, content: m.content })),
-		{ role: 'user', content: input.question }
+		{
+			role: 'user',
+			content: `${input.question}\n\nAnswer only this question — do not re-explain the task or project.`
+		}
 	];
 	const content = await streamChat(
 		input.apiKey,
