@@ -52,6 +52,29 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Verify updater signing key
+        shell: bash
+        env:
+          KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          node -e '
+            const key = process.env.KEY || "";
+            if (!key) {
+              console.error("::error::The TAURI_SIGNING_PRIVATE_KEY repository secret is missing. Add the single-line contents of src-tauri/.updater-key as a repository secret with that name, then re-run this workflow. Without it the updater artifacts cannot be signed.");
+              process.exit(1);
+            }
+            if (/\s/.test(key)) {
+              console.error("::error::TAURI_SIGNING_PRIVATE_KEY contains whitespace or a trailing newline. Paste the key as a single line with no line breaks.");
+              process.exit(1);
+            }
+            const text = Buffer.from(key, "base64").toString("utf8");
+            if (!text.includes("encrypted secret key")) {
+              console.error("::error::TAURI_SIGNING_PRIVATE_KEY does not decode to a private key (expected \"encrypted secret key\" in the decoded comment). Did you paste src-tauri/.updater-key.pub by mistake?");
+              process.exit(1);
+            }
+            console.log("Updater signing key looks valid.");
+          '
+
       - name: Set version from tag
         shell: bash
         run: |
@@ -73,9 +96,11 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # The generated key is not password protected, so only the key itself
-          # is set. Do not add an empty TAURI_SIGNING_PRIVATE_KEY_PASSWORD env:
-          # tauri would try to decrypt the key with an empty password and fail.
+          # The key was generated with `tauri signer generate --ci`, i.e. it is
+          # encrypted with an EMPTY password. In CI mode (CI=true is set by
+          # GitHub Actions) tauri automatically falls back to an empty password
+          # when TAURI_SIGNING_PRIVATE_KEY_PASSWORD is not set, so no password
+          # secret is required here.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         with:
           tagName: ${{ github.ref_name }}
