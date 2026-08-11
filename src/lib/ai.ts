@@ -8,12 +8,14 @@ const PRIORITIES: Priority[] = ['urgent', 'high', 'medium', 'low'];
 
 type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string };
 
+type ChatResult = { content: string; finishReason: string };
+
 async function chat(
 	apiKey: string,
 	model: string,
 	messages: ChatMessage[],
 	json: boolean
-): Promise<string> {
+): Promise<ChatResult> {
 	const makeRequest = (useJsonMode: boolean) =>
 		fetch(DEEPSEEK_URL, {
 			method: 'POST',
@@ -29,26 +31,34 @@ async function chat(
 			})
 		});
 
-	let response = await makeRequest(json);
-	// Some models (e.g. deepseek-reasoner) reject response_format; retry without it.
-	if (!response.ok && json && response.status === 400) {
-		response = await makeRequest(false);
-	}
-	if (!response.ok) {
-		let detail = '';
-		try {
-			detail = await response.text();
-		} catch {
-			// ignore body read errors
+	let lastFinishReason = 'unknown';
+	for (let attempt = 0; attempt < 2; attempt++) {
+		let response = await makeRequest(json);
+		// Some models (e.g. deepseek-reasoner) reject response_format; retry without it.
+		if (!response.ok && json && response.status === 400) {
+			response = await makeRequest(false);
 		}
-		throw new Error(`DeepSeek API error (${response.status}): ${detail.slice(0, 400)}`);
+		if (!response.ok) {
+			let detail = '';
+			try {
+				detail = await response.text();
+			} catch {
+				// ignore body read errors
+			}
+			throw new Error(`DeepSeek API error (${response.status}): ${detail.slice(0, 400)}`);
+		}
+		const data = await response.json();
+		const choice = data?.choices?.[0];
+		const content: unknown = choice?.message?.content;
+		const finishReason: unknown = choice?.finish_reason;
+		lastFinishReason = typeof finishReason === 'string' ? finishReason : 'unknown';
+		if (typeof content === 'string' && content.trim()) {
+			return { content, finishReason: lastFinishReason };
+		}
 	}
-	const data = await response.json();
-	const content: unknown = data?.choices?.[0]?.message?.content;
-	if (typeof content !== 'string' || !content.trim()) {
-		throw new Error('DeepSeek returned an empty response.');
-	}
-	return content;
+	throw new Error(
+		`DeepSeek returned an empty response (finish_reason: ${lastFinishReason}). Try again.`
+	);
 }
 
 /** Parses a model reply, tolerating markdown code fences around the JSON. */
@@ -62,13 +72,13 @@ function extractJson(text: string): unknown {
  * Asks the model which specialties/roles are relevant for a project,
  * based on its name and description. Returns concise role labels.
  */
-export async function suggestSpecialties(
+	export async function suggestSpecialties(
 	projectName: string,
 	description: string,
 	apiKey: string,
 	model: string
 ): Promise<string[]> {
-	const content = await chat(
+	const { content } = await chat(
 		apiKey,
 		model,
 		[
@@ -156,8 +166,10 @@ export async function generateAiDraft(input: {
   ]
 }`;
 
-	const rules = `- Produce as many tasks as needed to cover the work comprehensively (typically 8-20+). Prefer smaller, more granular tasks over large ones — each task should be doable by one person in a day or less.
-- Every task needs a detailed description (what, how to verify, edge cases).
+	const rules = `- Produce as many tasks as the project genuinely requires — there is no fixed cap. A small scope might need 8-15 tasks; a large or long project can need 50, 100 or more. Keep adding tasks until the described scope is fully covered; do not pad with filler.
+- Prefer focused, actionable tasks over big vague ones.
+- Size the total honestly: the combined estimate_hours across all tasks should match the project's scope, team size and target date — not more, not less.
+- Keep each task's description tight (2-3 sentences: what to do, how to verify, edge cases) so the backlog stays efficient.
 - Every task MUST include estimate_hours as a plain JSON number (e.g. 3, 2.5, 8) — never a string like "3h" or "1-2 days".
 - Only assign tasks to member names from the provided team list; otherwise null.
 - Use only the allowed priority values.
@@ -180,17 +192,34 @@ ${schema}
 Rules:
 ${rules}`;
 
-	const content = await chat(
-		input.apiKey,
-		input.model,
-		[
-			{
-				role: 'system',
-				content: systemPrompt
-			},
-			{
-				role: 'user',
-				content: `Project: ${input.projectName}
+	/** Normalizes a parsed tasks array into draft tasks. */
+	function parseDraftTasks(parsed: { tasks?: unknown }): AiDraftTask[] {
+		if (!Array.isArray(parsed.tasks)) return [];
+		return parsed.tasks
+			.filter((t): t is Record<string, unknown> => typeof t === 'object' && t !== null)
+			.filter((t) => typeof t.title === 'string' && String(t.title).trim())
+			.map((t) => {
+				const priority = PRIORITIES.includes(t.priority as Priority)
+					? (t.priority as Priority)
+					: 'medium';
+				const estimate = parseEstimate(
+					t.estimate_hours ?? t.estimateHours ?? t.estimate ?? t.hours
+				);
+				return {
+					title: String(t.title).trim(),
+					description:
+						typeof t.description === 'string' ? t.description.trim() : '',
+					priority,
+					tags: Array.isArray(t.tags)
+						? t.tags.filter((x): x is string => typeof x === 'string').map((x) => x.trim()).filter(Boolean)
+						: [],
+					assignee: typeof t.assignee === 'string' ? t.assignee : undefined,
+					estimateHours: estimate ?? DEFAULT_ESTIMATE[priority]
+				};
+			});
+	}
+
+	const baseUserContent = `Project: ${input.projectName}
 Project description: ${input.projectDescription || '(none)'}
 
 Desires / requirements:
@@ -202,58 +231,103 @@ Team members:
 ${memberLines}
 
 Existing task titles (do not duplicate):
-${existing}
+${existing}`;
 
+	const continuationPrompt = (usedTitles: string[]) =>
+		`You were cut off while generating the plan. Continue from where you stopped and produce MORE tasks following the same schema (title, description, priority, tags, estimate_hours, assignee).
+
+Respond with JSON only: {"tasks": [ ... ]}
+
+Do NOT repeat any of these existing task titles:
 ${
-					revising
-						? `Current draft with the user's manual edits (preserve them and improve):\n${JSON.stringify(
-								input.currentDraft
-							)}\n\nReturn the complete revised JSON following the schema.`
-						: 'Respond with JSON only following the schema.'
-				}`
-			}
-		],
-		true
+			usedTitles.length > 0
+				? usedTitles.map((t) => `- ${t}`).join('\n')
+				: '- none'
+		}`;
+
+	const MAX_CALLS = 4;
+	const spec: string[] = [];
+	const userStories: string[] = [];
+	const tasks: AiDraftTask[] = [];
+	const seenTitles = new Set(
+		input.existingTitles.map((t) => t.trim().toLowerCase()).filter(Boolean)
 	);
 
-	const parsed = extractJson(content) as {
-		spec?: unknown;
-		userStories?: unknown;
-		tasks?: unknown;
-	};
+	let lastError: unknown = null;
+	for (let call = 0; call < MAX_CALLS; call++) {
+		const isContinuation = call > 0;
+		const userContent = isContinuation
+			? `${baseUserContent}\n\n${continuationPrompt([...seenTitles])}`
+			: revising
+				? `${baseUserContent}\n\nCurrent draft with the user's manual edits (preserve them and improve):\n${JSON.stringify(
+						input.currentDraft
+					)}\n\nReturn the complete revised JSON following the schema.`
+				: `${baseUserContent}\n\nRespond with JSON only following the schema.`;
 
-	const tasks: AiDraftTask[] = Array.isArray(parsed.tasks)
-		? parsed.tasks
-				.filter((t): t is Record<string, unknown> => typeof t === 'object' && t !== null)
-				.filter((t) => typeof t.title === 'string' && String(t.title).trim())
-				.map((t) => {
-					const priority = PRIORITIES.includes(t.priority as Priority)
-						? (t.priority as Priority)
-						: 'medium';
-					const estimate = parseEstimate(
-						t.estimate_hours ?? t.estimateHours ?? t.estimate ?? t.hours
+		let content = '';
+		let finishReason = '';
+		try {
+			const result = await chat(
+				input.apiKey,
+				input.model,
+				[
+					{ role: 'system', content: systemPrompt },
+					{ role: 'user', content: userContent }
+				],
+				true
+			);
+			content = result.content;
+			finishReason = result.finishReason;
+		} catch (err) {
+			lastError = err;
+			continue; // a single failed call shouldn't abort the whole draft
+		}
+
+		let parsed: { spec?: unknown; userStories?: unknown; tasks?: unknown } | null = null;
+		try {
+			parsed = extractJson(content) as {
+				spec?: unknown;
+				userStories?: unknown;
+				tasks?: unknown;
+			};
+		} catch {
+			parsed = null;
+		}
+
+		if (parsed) {
+			if (call === 0) {
+				if (typeof parsed.spec === 'string' && parsed.spec.trim()) {
+					spec.push(parsed.spec.trim());
+				}
+				if (Array.isArray(parsed.userStories)) {
+					userStories.push(
+						...parsed.userStories
+							.filter((s): s is string => typeof s === 'string')
+							.map((s) => s.trim())
+							.filter(Boolean)
 					);
-					return {
-						title: String(t.title).trim(),
-						description:
-							typeof t.description === 'string' ? t.description.trim() : '',
-						priority,
-						tags: Array.isArray(t.tags)
-							? t.tags.filter((x): x is string => typeof x === 'string').map((x) => x.trim()).filter(Boolean)
-							: [],
-						assignee: typeof t.assignee === 'string' ? t.assignee : undefined,
-						estimateHours: estimate ?? DEFAULT_ESTIMATE[priority]
-					};
-				})
-		: [];
+				}
+			}
+			for (const task of parseDraftTasks(parsed)) {
+				const key = task.title.toLowerCase();
+				if (seenTitles.has(key)) continue;
+				seenTitles.add(key);
+				tasks.push(task);
+			}
+		}
 
-	return {
-		spec: typeof parsed.spec === 'string' ? parsed.spec.trim() : '',
-		userStories: Array.isArray(parsed.userStories)
-			? parsed.userStories.filter((s): s is string => typeof s === 'string').map((s) => s.trim()).filter(Boolean)
-			: [],
-		tasks
-	};
+		// Stop when the model finished naturally; keep going when it was cut off.
+		if (parsed && finishReason !== 'length') break;
+	}
+
+	if (tasks.length === 0 && spec.length === 0 && userStories.length === 0) {
+		if (lastError) throw lastError;
+		throw new Error(
+			'The AI response could not be parsed (it may have been cut off). Try again, or describe a smaller slice of the project and refine iteratively.'
+		);
+	}
+
+	return { spec: spec[0] ?? '', userStories, tasks };
 }
 
 /** Verifies the API key by making a minimal request. Throws on failure. */

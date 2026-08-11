@@ -222,6 +222,19 @@
 		})
 	);
 
+	const LIST_PAGE_SIZE = 25;
+	let listPage = $state(1);
+	const listPageCount = $derived(
+		Math.max(1, Math.ceil(listRows.length / LIST_PAGE_SIZE))
+	);
+	const effectiveListPage = $derived(Math.min(listPage, listPageCount));
+	const listPageRows = $derived(
+		listRows.slice(
+			(effectiveListPage - 1) * LIST_PAGE_SIZE,
+			effectiveListPage * LIST_PAGE_SIZE
+		)
+	);
+
 	const roadmapStart = $derived.by(() => {
 		const earliest =
 			projectTasks.length > 0
@@ -392,6 +405,21 @@
 	let newStory = $state('');
 	let draftLoaded = $state(false);
 
+	const DRAFT_PAGE_SIZE = 15;
+	let draftPage = $state(1);
+	const draftPageCount = $derived(
+		aiDraft ? Math.max(1, Math.ceil(aiDraft.tasks.length / DRAFT_PAGE_SIZE)) : 1
+	);
+	const effectiveDraftPage = $derived(Math.min(draftPage, draftPageCount));
+	const draftPageTasks = $derived(
+		aiDraft
+			? aiDraft.tasks.slice(
+					(effectiveDraftPage - 1) * DRAFT_PAGE_SIZE,
+					effectiveDraftPage * DRAFT_PAGE_SIZE
+				)
+			: []
+	);
+
 	// Resume a previously saved draft when the project opens.
 	$effect(() => {
 		if (!project || !status.ready || draftLoaded) return;
@@ -534,6 +562,7 @@
 				aiError = 'The AI returned an empty plan. Try rephrasing your desires.';
 			} else {
 				aiDraft = draft;
+				draftPage = 1;
 				persistDraftNow();
 			}
 		} catch (err) {
@@ -1426,7 +1455,8 @@
 							{/if}
 						</h3>
 						<ul class="mt-1 space-y-2">
-							{#each aiDraft.tasks as task, i (i)}
+							{#each draftPageTasks as task, i (i)}
+								{@const globalIndex = (effectiveDraftPage - 1) * DRAFT_PAGE_SIZE + i}
 								<li class="rounded-lg border border-neutral-200 bg-surface/60 p-2.5">
 									<div class="flex flex-wrap items-center gap-2">
 										<input
@@ -1467,7 +1497,7 @@
 											type="button"
 											class="shrink-0 rounded-md p-1.5 text-neutral-400 hover:bg-red-50 hover:text-red-600"
 											aria-label="Remove task"
-											onclick={() => aiDraft!.tasks.splice(i, 1)}
+											onclick={() => aiDraft!.tasks.splice(globalIndex, 1)}
 										>
 											<Trash2 size={15} />
 										</button>
@@ -1481,6 +1511,31 @@
 								</li>
 							{/each}
 						</ul>
+						{#if draftPageCount > 1}
+							<div class="flex items-center justify-between pt-2">
+								<p class="text-xs text-neutral-400">
+									Page {effectiveDraftPage} of {draftPageCount} · {aiDraft.tasks.length} tasks
+								</p>
+								<div class="flex items-center gap-1">
+									<button
+										type="button"
+										class="rounded-lg border border-neutral-200 bg-surface px-3 py-1.5 text-xs font-medium text-neutral-600 transition-colors hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-40"
+										onclick={() => (draftPage = Math.max(1, draftPage - 1))}
+										disabled={draftPage <= 1}
+									>
+										Previous
+									</button>
+									<button
+										type="button"
+										class="rounded-lg border border-neutral-200 bg-surface px-3 py-1.5 text-xs font-medium text-neutral-600 transition-colors hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-40"
+										onclick={() => (draftPage = Math.min(draftPageCount, draftPage + 1))}
+										disabled={draftPage >= draftPageCount}
+									>
+										Next
+									</button>
+								</div>
+							</div>
+						{/if}
 					</div>
 					<p class="text-xs text-neutral-400">
 						Edit anything above, then hit “Refine with AI” to recalibrate the plan, or publish
@@ -1756,7 +1811,7 @@
 						</tr>
 					</thead>
 					<tbody>
-						{#each listRows as task (task.id)}
+						{#each listPageRows as task (task.id)}
 							{@const assignee = memberById(task.assigneeId)}
 							<tr
 								class="border-b border-neutral-100 last:border-b-0 hover:bg-neutral-50 {task.status ===
@@ -1819,6 +1874,31 @@
 					</tbody>
 				</table>
 			</div>
+			{#if listPageCount > 1}
+				<div class="flex items-center justify-between border-t border-neutral-100 px-5 py-3">
+					<p class="text-xs text-neutral-400">
+						Page {effectiveListPage} of {listPageCount} · {listRows.length} tasks
+					</p>
+					<div class="flex items-center gap-1">
+						<button
+							type="button"
+							class="rounded-lg border border-neutral-200 bg-surface px-3 py-1.5 text-xs font-medium text-neutral-600 transition-colors hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-40"
+							onclick={() => (listPage = Math.max(1, listPage - 1))}
+							disabled={listPage <= 1}
+						>
+							Previous
+						</button>
+						<button
+							type="button"
+							class="rounded-lg border border-neutral-200 bg-surface px-3 py-1.5 text-xs font-medium text-neutral-600 transition-colors hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-40"
+							onclick={() => (listPage = Math.min(listPageCount, listPage + 1))}
+							disabled={listPage >= listPageCount}
+						>
+							Next
+						</button>
+					</div>
+				</div>
+			{/if}
 		</section>
 	{:else if view === 'roadmap'}
 		<section class="mt-6 rounded-xl border border-neutral-200 bg-surface p-5 shadow-xs">
