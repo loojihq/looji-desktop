@@ -127,6 +127,13 @@
 	let boardPriority = $state<'all' | Priority>('all');
 	let boardAssignee = $state<'all' | 'none' | string>('all');
 
+	// When search/filters are active the visible cards are a subset, so precise
+	// drop positions can't map to the full column — reordering falls back to
+	// appending at the end of the column (no insertion indicator).
+	const boardFiltering = $derived(
+		boardQuery.trim() !== '' || boardPriority !== 'all' || boardAssignee !== 'all'
+	);
+
 	function clearBoardFilters() {
 		boardQuery = '';
 		boardPriority = 'all';
@@ -234,19 +241,24 @@
 		if (column) {
 			const status = column.dataset.status as TaskStatus;
 			overStatus = status;
-			// Compute where inside the column the card would land: the index of
-			// the card whose midpoint the pointer is above, or the end otherwise.
-			const cards = column.querySelectorAll<HTMLElement>('[data-task-id]');
-			let insertAt = cards.length;
-			for (let i = 0; i < cards.length; i++) {
-				const rect = cards[i].getBoundingClientRect();
-				if (event.clientY < rect.top + rect.height / 2) {
-					insertAt = i;
-					break;
+			if (boardFiltering) {
+				dropColumn = status;
+				dropIndex = -1;
+			} else {
+				// Compute where inside the column the card would land: the index of
+				// the card whose midpoint the pointer is above, or the end otherwise.
+				const cards = column.querySelectorAll<HTMLElement>('[data-task-id]');
+				let insertAt = cards.length;
+				for (let i = 0; i < cards.length; i++) {
+					const rect = cards[i].getBoundingClientRect();
+					if (event.clientY < rect.top + rect.height / 2) {
+						insertAt = i;
+						break;
+					}
 				}
+				dropColumn = status;
+				dropIndex = insertAt;
 			}
-			dropColumn = status;
-			dropIndex = insertAt;
 		} else {
 			overStatus = null;
 			dropColumn = null;
@@ -264,7 +276,7 @@
 			if (overStatus && dropColumn) {
 				const task = tasks.find((t) => t.id === taskId);
 				if (task) {
-					void moveTask(taskId, dropColumn, dropIndex);
+					void moveTask(taskId, dropColumn, dropIndex >= 0 ? dropIndex : undefined);
 				}
 			}
 			suppressClick = true;
@@ -459,36 +471,46 @@
 	let repoScanError = $state('');
 	let explainRepo = $state<RepoContext | null>(null);
 	let explainRepoTaskId = $state<string | null>(null);
+	let repoScanPromise: Promise<void> | null = null;
 
-	async function scanProjectRepo() {
-		if (!project?.repoPath || repoScanning) return;
-		repoScanning = true;
-		repoScanError = '';
+	async function scanProjectRepo(): Promise<void> {
+		if (!project?.repoPath) return;
+		// Share the in-flight scan so concurrent callers wait for the same one.
+		if (repoScanPromise) return repoScanPromise;
+		repoScanPromise = (async () => {
+			repoScanning = true;
+			repoScanError = '';
+			try {
+				// Reuse the persisted index when the path is unchanged, so opening
+				// the chat doesn't re-walk the whole repository every time.
+				const cached = await loadRepoIndex(project.id);
+				if (cached && cached.root === project.repoPath && cached.files.length > 0) {
+					repoScan = { root: cached.root, files: cached.files, truncated: false, error: null };
+					repoSymbols = cached.symbols;
+					return;
+				}
+				const scan = await scanRepo(project.repoPath);
+				repoScan = scan;
+				if (scan.error) {
+					repoScanError = scan.error;
+					return;
+				}
+				repoSymbols = await extractSymbols(scan.root, scan.files);
+				await saveRepoIndex(project.id, {
+					root: scan.root,
+					files: scan.files,
+					symbols: repoSymbols
+				});
+			} catch (err) {
+				repoScanError = err instanceof Error ? err.message : String(err);
+			} finally {
+				repoScanning = false;
+			}
+		})();
 		try {
-			// Reuse the persisted index when the path is unchanged, so opening
-			// the chat doesn't re-walk the whole repository every time.
-			const cached = await loadRepoIndex(project.id);
-			if (cached && cached.root === project.repoPath && cached.files.length > 0) {
-				repoScan = { root: cached.root, files: cached.files, truncated: false, error: null };
-				repoSymbols = cached.symbols;
-				return;
-			}
-			const scan = await scanRepo(project.repoPath);
-			repoScan = scan;
-			if (scan.error) {
-				repoScanError = scan.error;
-				return;
-			}
-			repoSymbols = await extractSymbols(scan.root, scan.files);
-			await saveRepoIndex(project.id, {
-				root: scan.root,
-				files: scan.files,
-				symbols: repoSymbols
-			});
-		} catch (err) {
-			repoScanError = err instanceof Error ? err.message : String(err);
+			await repoScanPromise;
 		} finally {
-			repoScanning = false;
+			repoScanPromise = null;
 		}
 	}
 
@@ -499,7 +521,8 @@
 	async function ensureRepoContext(task: Task): Promise<RepoContext | null> {
 		if (!project?.repoPath) return null;
 		if (explainRepo && explainRepoTaskId === task.id) return explainRepo;
-		if (!repoScan && !repoScanning) await scanProjectRepo();
+		// Wait for any in-flight scan so the first prompt includes repo context.
+		if (!repoScan) await scanProjectRepo();
 		if (!repoScan || repoScan.error) return null;
 		const keywords = [task.title, task.description, ...task.tags].filter((k) => k.trim());
 		const tree = repoTreeText(repoScan.files);
@@ -1017,7 +1040,7 @@
 	 *  project + desires). Returns null when no repo is connected/readable. */
 	async function ensureProjectRepoContext(): Promise<RepoContext | null> {
 		if (!project?.repoPath || !aiRepoEnabled) return null;
-		if (!repoScan && !repoScanning) await scanProjectRepo();
+		if (!repoScan) await scanProjectRepo();
 		if (!repoScan || repoScan.error) return null;
 		const keywords = [project.name, project.description, aiDesires].filter((k) => k.trim());
 		const hunks = await readRelevantHunks(repoScan.root, repoScan.files, repoSymbols, keywords);
@@ -2788,7 +2811,7 @@
 
 {#if explainTarget}
 	<div class="fixed inset-0 z-50 flex items-center justify-center p-4">
-		<!-- Deliberately no click handler: the modal only closes via ✕ or Cancel. -->
+		<!-- Deliberately no click handler: the modal only closes via ✕. -->
 		<div class="absolute inset-0 bg-overlay" role="presentation"></div>
 		<div
 			class="relative flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-neutral-200"
