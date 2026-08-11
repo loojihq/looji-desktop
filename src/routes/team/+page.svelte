@@ -2,6 +2,7 @@
 	import { Mail, Pencil, Trash2, UserPlus, X } from '@lucide/svelte';
 	import Avatar from '$lib/components/Avatar.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+	import Select from '$lib/components/Select.svelte';
 	import { addMember, deleteMember, members, tasks, updateMember } from '$lib/store.svelte';
 	import type { Member } from '$lib/types';
 
@@ -128,15 +129,12 @@
 		</div>
 		<div>
 			<label for="member-role" class="mb-1 block text-xs font-medium text-neutral-600">Role</label>
-			<select
+			<Select
 				id="member-role"
-				class="w-full rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
+				class="w-full"
 				bind:value={formRole}
-			>
-				{#each roles as role (role)}
-					<option value={role}>{role}</option>
-				{/each}
-			</select>
+				options={roles.map((r) => ({ value: r, label: r }))}
+			/>
 		</div>
 		<div class="flex gap-2">
 			<button

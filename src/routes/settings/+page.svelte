@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Trash2 } from '@lucide/svelte';
+	import Select from '$lib/components/Select.svelte';
 	import { fetchDeepSeekModels, testDeepSeekConnection } from '$lib/ai';
 	import { settings, updateSetting } from '$lib/store.svelte';
 
@@ -163,21 +164,20 @@
 					</div>
 					<div>
 						<label for="ai-model" class="mb-1 block text-xs font-medium text-neutral-600">Model</label>
-						<select
+						<Select
 							id="ai-model"
-							class="w-full rounded-lg border-neutral-300 bg-surface text-sm focus:border-indigo-500 focus:ring-indigo-500"
+							class="w-full"
 							bind:value={settings.aiModel}
-							onchange={() => updateSetting('aiModel', settings.aiModel)}
-						>
-							{#if aiModels.length > 0}
-								{#each aiModels as m (m)}
-									<option value={m}>{m}</option>
-								{/each}
-							{:else}
-								<option value="deepseek-chat">deepseek-chat</option>
-								<option value="deepseek-reasoner">deepseek-reasoner</option>
-							{/if}
-						</select>
+							onchange={(v) => updateSetting('aiModel', v)}
+							options={
+								aiModels.length > 0
+									? aiModels.map((m) => ({ value: m, label: m }))
+									: [
+											{ value: 'deepseek-chat', label: 'deepseek-chat' },
+											{ value: 'deepseek-reasoner', label: 'deepseek-reasoner' }
+										]
+							}
+						/>
 						<p class="mt-1 text-xs text-neutral-400">
 							{aiLoadingModels
 								? 'Loading available models…'
@@ -269,18 +269,19 @@
 						<label for="workspace-tz" class="mb-1 block text-xs font-medium text-neutral-600">
 							Time zone
 						</label>
-						<select
+						<Select
 							id="workspace-tz"
-							class="w-full rounded-lg border-neutral-300 bg-surface text-sm focus:border-indigo-500 focus:ring-indigo-500"
+							class="w-full"
 							bind:value={settings.timezone}
-							onchange={() => updateSetting('timezone', settings.timezone)}
-						>
-							<option value="America/Los_Angeles">Pacific Time (US)</option>
-							<option value="America/New_York">Eastern Time (US)</option>
-							<option value="Europe/London">London</option>
-							<option value="Europe/Berlin">Berlin</option>
-							<option value="Asia/Tokyo">Tokyo</option>
-						</select>
+							onchange={(v) => updateSetting('timezone', v)}
+							options={[
+								{ value: 'America/Los_Angeles', label: 'Pacific Time (US)' },
+								{ value: 'America/New_York', label: 'Eastern Time (US)' },
+								{ value: 'Europe/London', label: 'London' },
+								{ value: 'Europe/Berlin', label: 'Berlin' },
+								{ value: 'Asia/Tokyo', label: 'Tokyo' }
+							]}
+						/>
 					</div>
 				</div>
 				<div class="mt-6 border-t border-neutral-100 pt-5">

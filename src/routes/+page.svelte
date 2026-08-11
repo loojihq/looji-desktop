@@ -16,6 +16,7 @@
 	import Avatar from '$lib/components/Avatar.svelte';
 	import Badge from '$lib/components/Badge.svelte';
 	import ProgressBar from '$lib/components/ProgressBar.svelte';
+	import Select from '$lib/components/Select.svelte';
 	import { projectAccents } from '$lib/badges';
 	import {
 		auditLog,
@@ -135,15 +136,12 @@
 				bind:value={quickTitle}
 				required
 			/>
-			<select
-				class="rounded-lg border-neutral-300 bg-surface text-sm focus:border-indigo-500 focus:ring-indigo-500"
+			<Select
+				class="w-48"
 				bind:value={quickProjectId}
-				aria-label="Project"
-			>
-				{#each projects as project (project.id)}
-					<option value={project.id}>{project.name}</option>
-				{/each}
-			</select>
+				ariaLabel="Project"
+				options={projects.map((p) => ({ value: p.id, label: p.name }))}
+			/>
 			<button
 				type="submit"
 				class="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500"

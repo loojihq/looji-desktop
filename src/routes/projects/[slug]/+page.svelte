@@ -8,6 +8,7 @@
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import Markdown from '$lib/components/Markdown.svelte';
 	import ProgressBar from '$lib/components/ProgressBar.svelte';
+	import Select from '$lib/components/Select.svelte';
 	import { explainTask, generateAiDraft, suggestSpecialties, taskChatFollowUp, type TaskChatMessage, type TaskContext } from '$lib/ai';
 	import { exportDraftPdf, exportProjectPdf } from '$lib/pdf';
 	import { projectAccents, priorityStyles, projectStatusStyles, taskStatusStyles } from '$lib/badges';
@@ -1357,15 +1358,15 @@
 					<label for="proj-status" class="mb-1 block text-xs font-medium text-neutral-600">
 						Status
 					</label>
-					<select
+					<Select
 						id="proj-status"
-						class="w-full rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
+						class="w-full"
 						bind:value={projStatus}
-					>
-						{#each projectStatuses as s (s)}
-							<option value={s}>{projectStatusStyles[s].label}</option>
-						{/each}
-					</select>
+						options={projectStatuses.map((s) => ({
+							value: s,
+							label: projectStatusStyles[s].label
+						}))}
+					/>
 				</div>
 				<div>
 					<label for="proj-due" class="mb-1 block text-xs font-medium text-neutral-600">
@@ -1467,44 +1468,43 @@
 					<label for="edit-status" class="mb-1 block text-xs font-medium text-neutral-600">
 						Status
 					</label>
-					<select
+					<Select
 						id="edit-status"
-						class="w-full rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
+						class="w-full"
 						bind:value={editStatus}
-					>
-						{#each taskStatuses as status (status)}
-							<option value={status}>{taskStatusStyles[status].label}</option>
-						{/each}
-					</select>
+						options={taskStatuses.map((s) => ({
+							value: s,
+							label: taskStatusStyles[s].label
+						}))}
+					/>
 				</div>
 				<div>
 					<label for="edit-priority" class="mb-1 block text-xs font-medium text-neutral-600">
 						Priority
 					</label>
-					<select
+					<Select
 						id="edit-priority"
-						class="w-full rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
+						class="w-full"
 						bind:value={editPriority}
-					>
-						{#each priorities as priority (priority)}
-							<option value={priority}>{priorityStyles[priority].label}</option>
-						{/each}
-					</select>
+						options={priorities.map((p) => ({
+							value: p,
+							label: priorityStyles[p].label
+						}))}
+					/>
 				</div>
 				<div>
 					<label for="edit-assignee" class="mb-1 block text-xs font-medium text-neutral-600">
 						Assignee
 					</label>
-					<select
+					<Select
 						id="edit-assignee"
-						class="w-full rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
+						class="w-full"
 						bind:value={editAssigneeId}
-					>
-						<option value="">Unassigned</option>
-						{#each members as member (member.id)}
-							<option value={member.id}>{member.name}</option>
-						{/each}
-					</select>
+						options={[
+							{ value: '', label: 'Unassigned' },
+							...members.map((m) => ({ value: m.id, label: m.name }))
+						]}
+					/>
 				</div>
 				<div>
 					<label for="edit-due" class="mb-1 block text-xs font-medium text-neutral-600">Due date</label>
@@ -1845,15 +1845,16 @@
 											class="min-w-40 flex-1 rounded-lg border-neutral-300 bg-surface px-2.5 py-1.5 text-sm font-medium focus:border-indigo-500 focus:ring-indigo-500"
 											bind:value={task.title}
 										/>
-										<select
-											class="rounded-lg border-neutral-300 bg-surface px-2 py-1.5 text-sm focus:border-indigo-500 focus:ring-indigo-500"
+										<Select
+											class="w-32 shrink-0"
+											compact
 											bind:value={task.priority}
-											aria-label="Priority"
-										>
-											{#each priorities as p (p)}
-												<option value={p}>{priorityStyles[p].label}</option>
-											{/each}
-										</select>
+											ariaLabel="Priority"
+											options={priorities.map((p) => ({
+												value: p,
+												label: priorityStyles[p].label
+											}))}
+										/>
 										<input
 											type="number"
 											min="0"
@@ -1864,16 +1865,16 @@
 											bind:value={task.estimateHours}
 											aria-label="Estimate in hours"
 										/>
-										<select
-											class="rounded-lg border-neutral-300 bg-surface px-2 py-1.5 text-sm focus:border-indigo-500 focus:ring-indigo-500"
+										<Select
+											class="w-36 shrink-0"
+											compact
 											bind:value={task.assignee}
-											aria-label="Assignee"
-										>
-											<option value="">Unassigned</option>
-											{#each selectedAiMembers as m (m.id)}
-												<option value={m.name}>{m.name}</option>
-											{/each}
-										</select>
+											ariaLabel="Assignee"
+											options={[
+												{ value: '', label: 'Unassigned' },
+												...selectedAiMembers.map((m) => ({ value: m.name, label: m.name }))
+											]}
+										/>
 										<button
 											type="button"
 											class="shrink-0 rounded-md p-1.5 text-neutral-400 hover:bg-red-50 hover:text-red-600"
@@ -1957,27 +1958,25 @@
 					bind:value={boardQuery}
 				/>
 			</div>
-			<select
-				class="rounded-lg border-neutral-300 bg-surface px-2.5 py-2 text-sm focus:border-indigo-500 focus:ring-indigo-500"
+			<Select
+				class="w-40"
 				bind:value={boardPriority}
-				aria-label="Filter by priority"
-			>
-				<option value="all">All priorities</option>
-				{#each priorities as p (p)}
-					<option value={p}>{priorityStyles[p].label}</option>
-				{/each}
-			</select>
-			<select
-				class="rounded-lg border-neutral-300 bg-surface px-2.5 py-2 text-sm focus:border-indigo-500 focus:ring-indigo-500"
+				ariaLabel="Filter by priority"
+				options={[
+					{ value: 'all', label: 'All priorities' },
+					...priorities.map((p) => ({ value: p, label: priorityStyles[p].label }))
+				]}
+			/>
+			<Select
+				class="w-44"
 				bind:value={boardAssignee}
-				aria-label="Filter by assignee"
-			>
-				<option value="all">All assignees</option>
-				<option value="none">Unassigned</option>
-				{#each members as m (m.id)}
-					<option value={m.id}>{m.name}</option>
-				{/each}
-			</select>
+				ariaLabel="Filter by assignee"
+				options={[
+					{ value: 'all', label: 'All assignees' },
+					{ value: 'none', label: 'Unassigned' },
+					...members.map((m) => ({ value: m.id, label: m.name }))
+				]}
+			/>
 			{#if boardQuery.trim() || boardPriority !== 'all' || boardAssignee !== 'all'}
 				<p class="text-xs text-neutral-400">
 					{projectTasks.filter(matchesQuery).length} match{projectTasks.filter(matchesQuery)
@@ -2231,16 +2230,15 @@
 								bind:value={newTitle}
 								required
 							/>
-							<select
-								class="w-full rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
+							<Select
+								class="w-full"
 								bind:value={newAssigneeId}
-								aria-label="Assignee"
-							>
-								<option value="">Unassigned</option>
-								{#each members as member (member.id)}
-									<option value={member.id}>{member.name}</option>
-								{/each}
-							</select>
+								ariaLabel="Assignee"
+								options={[
+									{ value: '', label: 'Unassigned' },
+									...members.map((m) => ({ value: m.id, label: m.name }))
+								]}
+							/>
 						</form>
 					{/if}
 				</div>
@@ -2692,20 +2690,17 @@
 						}
 					}}
 				>
-					<select
-						class="h-10 w-44 shrink-0 rounded-lg border-neutral-300 bg-white px-2 text-xs font-medium text-neutral-700 focus:border-indigo-500 focus:ring-indigo-500"
-						aria-label="Model"
-						title="Model used to respond in this chat"
+					<Select
+						class="h-10 w-44 shrink-0"
+						direction="up"
 						bind:value={explainModel}
-					>
-						{#if settings.aiModels.length > 0}
-							{#each settings.aiModels as m (m)}
-								<option value={m}>{m}</option>
-							{/each}
-						{:else}
-							<option value={explainModel}>{explainModel}</option>
-						{/if}
-					</select>
+						ariaLabel="Model"
+						options={
+							settings.aiModels.length > 0
+								? settings.aiModels.map((m) => ({ value: m, label: m }))
+								: [{ value: explainModel, label: explainModel }]
+						}
+					/>
 					<textarea
 						rows="1"
 						placeholder="Ask a follow-up about the task"

@@ -6,6 +6,7 @@
 	import Badge from '$lib/components/Badge.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import ProgressBar from '$lib/components/ProgressBar.svelte';
+	import Select from '$lib/components/Select.svelte';
 	import { projectAccents, projectStatusStyles } from '$lib/badges';
 	import {
 		createProject,
@@ -153,15 +154,12 @@
 				<label for="project-status" class="mb-1 block text-xs font-medium text-neutral-600">
 					Status
 				</label>
-				<select
+				<Select
 					id="project-status"
-					class="w-full rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
+					class="w-full"
 					bind:value={formStatus}
-				>
-					{#each projectStatuses as s (s)}
-						<option value={s}>{projectStatusStyles[s].label}</option>
-					{/each}
-				</select>
+					options={projectStatuses.map((s) => ({ value: s, label: projectStatusStyles[s].label }))}
+				/>
 			</div>
 			<div>
 				<label for="project-due" class="mb-1 block text-xs font-medium text-neutral-600">

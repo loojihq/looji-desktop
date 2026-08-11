@@ -3,6 +3,7 @@
 	import Avatar from '$lib/components/Avatar.svelte';
 	import Badge from '$lib/components/Badge.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+	import Select from '$lib/components/Select.svelte';
 	import { priorityStyles, projectAccents, taskStatusStyles } from '$lib/badges';
 	import {
 		createTask,
@@ -158,58 +159,54 @@
 					<label for="edit-project" class="mb-1 block text-xs font-medium text-neutral-600">
 						Project
 					</label>
-					<select
+					<Select
 						id="edit-project"
-						class="w-full rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
+						class="w-full"
 						bind:value={editProjectId}
-					>
-						{#each projects as project (project.id)}
-							<option value={project.id}>{project.name}</option>
-						{/each}
-					</select>
+						options={projects.map((p) => ({ value: p.id, label: p.name }))}
+					/>
 				</div>
 				<div>
 					<label for="edit-status" class="mb-1 block text-xs font-medium text-neutral-600">
 						Status
 					</label>
-					<select
+					<Select
 						id="edit-status"
-						class="w-full rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
+						class="w-full"
 						bind:value={editStatus}
-					>
-						{#each taskStatuses as status (status)}
-							<option value={status}>{taskStatusStyles[status].label}</option>
-						{/each}
-					</select>
+						options={taskStatuses.map((s) => ({
+							value: s,
+							label: taskStatusStyles[s].label
+						}))}
+					/>
 				</div>
 				<div>
 					<label for="edit-priority" class="mb-1 block text-xs font-medium text-neutral-600">
 						Priority
 					</label>
-					<select
+					<Select
 						id="edit-priority"
-						class="w-full rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
+						class="w-full"
 						bind:value={editPriority}
-					>
-						{#each priorities as priority (priority)}
-							<option value={priority}>{priorityStyles[priority].label}</option>
-						{/each}
-					</select>
+						options={priorities.map((p) => ({
+							value: p,
+							label: priorityStyles[p].label
+						}))}
+					/>
 				</div>
 				<div>
 					<label for="edit-assignee" class="mb-1 block text-xs font-medium text-neutral-600">
 						Assignee
 					</label>
-					<select
+					<Select
 						id="edit-assignee"
-						class="w-full rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
+						class="w-full"
 						bind:value={editAssigneeId}
-					>
-						<option value="">Unassigned</option>
-						{#each members as member (member.id)}
-							<option value={member.id}>{member.name}</option>
-						{/each}
-					</select>
+						options={[
+							{ value: '', label: 'Unassigned' },
+							...members.map((m) => ({ value: m.id, label: m.name }))
+						]}
+					/>
 				</div>
 				<div>
 					<label for="edit-due" class="mb-1 block text-xs font-medium text-neutral-600">Due date</label>
@@ -267,34 +264,27 @@
 					bind:value={newTitle}
 				/>
 			</div>
-			<select
-				class="rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
+			<Select
+				class="w-48"
 				bind:value={newProjectId}
-				aria-label="Project"
-			>
-				{#each projects as project (project.id)}
-					<option value={project.id}>{project.name}</option>
-				{/each}
-			</select>
-			<select
-				class="rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
+				ariaLabel="Project"
+				options={projects.map((p) => ({ value: p.id, label: p.name }))}
+			/>
+			<Select
+				class="w-36"
 				bind:value={newPriority}
-				aria-label="Priority"
-			>
-				{#each priorities as priority (priority)}
-					<option value={priority}>{priorityStyles[priority].label}</option>
-				{/each}
-			</select>
-			<select
-				class="rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
+				ariaLabel="Priority"
+				options={priorities.map((p) => ({ value: p, label: priorityStyles[p].label }))}
+			/>
+			<Select
+				class="w-40"
 				bind:value={newAssigneeId}
-				aria-label="Assignee"
-			>
-				<option value="">Unassigned</option>
-				{#each members as member (member.id)}
-					<option value={member.id}>{member.name}</option>
-				{/each}
-			</select>
+				ariaLabel="Assignee"
+				options={[
+					{ value: '', label: 'Unassigned' },
+					...members.map((m) => ({ value: m.id, label: m.name }))
+				]}
+			/>
 			<button
 				type="submit"
 				class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500"
@@ -319,26 +309,24 @@
 			bind:value={query}
 		/>
 	</div>
-	<select
-		class="rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
+	<Select
+		class="w-40"
 		bind:value={statusFilter}
-		aria-label="Filter by status"
-	>
-		<option value="all">All statuses</option>
-		{#each taskStatuses as status (status)}
-			<option value={status}>{taskStatusStyles[status].label}</option>
-		{/each}
-	</select>
-	<select
-		class="rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
+		ariaLabel="Filter by status"
+		options={[
+			{ value: 'all', label: 'All statuses' },
+			...taskStatuses.map((s) => ({ value: s, label: taskStatusStyles[s].label }))
+		]}
+	/>
+	<Select
+		class="w-40"
 		bind:value={priorityFilter}
-		aria-label="Filter by priority"
-	>
-		<option value="all">All priorities</option>
-		{#each priorities as priority (priority)}
-			<option value={priority}>{priorityStyles[priority].label}</option>
-		{/each}
-	</select>
+		ariaLabel="Filter by priority"
+		options={[
+			{ value: 'all', label: 'All priorities' },
+			...priorities.map((p) => ({ value: p, label: priorityStyles[p].label }))
+		]}
+	/>
 	<span class="ml-auto text-sm text-neutral-400">
 		{filtered.length} of {tasks.length} tasks
 	</span>
