@@ -340,6 +340,106 @@ export async function testDeepSeekConnection(apiKey: string, model: string): Pro
 	);
 }
 
+/** Context describing a task and the project it lives in. */
+export type TaskContext = {
+	projectName: string;
+	projectDescription: string;
+	task: {
+		title: string;
+		description: string;
+		priority: string;
+		estimate: number | null;
+		tags: string[];
+		assignee: string;
+		assigneeRole: string;
+	};
+	otherTasks: { title: string; status: string; assignee: string }[];
+};
+
+/** A single exchange in a task conversation (user question / assistant answer). */
+export type TaskChatMessage = { role: 'user' | 'assistant'; content: string };
+
+const TASK_SYSTEM_PROMPT =
+	'You are a senior software engineer and mentor. You explain tasks clearly and practically in plain text, using short paragraphs and bullet points. Be specific and actionable.';
+
+/** Builds the context message describing the project, the task and its neighbours. */
+function buildTaskContext(context: TaskContext): string {
+	const taskLines = [
+		`- Title: ${context.task.title}`,
+		`- Description: ${context.task.description || '(none)'}`,
+		`- Priority: ${context.task.priority}`,
+		`- Estimate: ${context.task.estimate ? `${context.task.estimate}h` : 'not set'}`,
+		`- Tags: ${context.task.tags.join(', ') || 'none'}`,
+		`- Assigned to: ${context.task.assignee || 'Unassigned'}${
+			context.task.assigneeRole ? ` (${context.task.assigneeRole})` : ''
+		}`
+	].join('\n');
+	const others =
+		context.otherTasks.length > 0
+			? context.otherTasks
+					.map((t) => `- ${t.title} — ${t.status}${t.assignee ? ` — ${t.assignee}` : ''}`)
+					.join('\n')
+			: '- none';
+	return `Project: ${context.projectName}
+Project description: ${context.projectDescription || '(none)'}
+
+The task to explain:
+${taskLines}
+
+Other tasks in this project (title — status — assignee):
+${others}`;
+}
+
+/**
+ * Explains a task for the person doing it: what it needs, how to implement it,
+ * how it relates to the rest of the project, and who is involved.
+ */
+export async function explainTask(input: TaskContext & {
+	apiKey: string;
+	model: string;
+}): Promise<string> {
+	const { content } = await chat(
+		input.apiKey,
+		input.model,
+		[
+			{ role: 'system', content: TASK_SYSTEM_PROMPT },
+			{
+				role: 'user',
+				content: `${buildTaskContext(input)}
+
+Explain the task for the person doing it:
+1. What this task actually requires, in plain language.
+2. How to implement it — a step-by-step approach with specific techniques, tools or patterns, and how to verify it works.
+3. Context & dependencies: which other tasks it depends on, which tasks depend on it, and who is working on them.
+4. Any risks, edge cases, or gotchas to watch for.`
+			}
+		],
+		false
+	);
+	return content.trim();
+}
+
+/**
+ * Answers a follow-up question about a task, keeping the full context:
+ * the project, the task, every related task, and the previous exchanges.
+ */
+export async function taskChatFollowUp(input: {
+	context: TaskContext;
+	history: TaskChatMessage[];
+	question: string;
+	apiKey: string;
+	model: string;
+}): Promise<string> {
+	const messages: ChatMessage[] = [
+		{ role: 'system', content: TASK_SYSTEM_PROMPT },
+		{ role: 'user', content: buildTaskContext(input.context) },
+		...input.history.map((m) => ({ role: m.role, content: m.content })),
+		{ role: 'user', content: input.question }
+	];
+	const { content } = await chat(input.apiKey, input.model, messages, false);
+	return content.trim();
+}
+
 /** Lists the models available to the given API key (OpenAI-compatible /models endpoint). */
 export async function fetchDeepSeekModels(apiKey: string): Promise<string[]> {
 	const response = await fetch(`${DEEPSEEK_BASE}/models`, {

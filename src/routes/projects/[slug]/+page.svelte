@@ -7,7 +7,7 @@
 	import Badge from '$lib/components/Badge.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import ProgressBar from '$lib/components/ProgressBar.svelte';
-	import { generateAiDraft, suggestSpecialties } from '$lib/ai';
+	import { explainTask, generateAiDraft, suggestSpecialties, taskChatFollowUp, type TaskChatMessage, type TaskContext } from '$lib/ai';
 	import { exportDraftPdf, exportProjectPdf } from '$lib/pdf';
 	import { projectAccents, priorityStyles, projectStatusStyles, taskStatusStyles } from '$lib/badges';
 	import {
@@ -112,15 +112,30 @@
 	let draggingId = $state<string | null>(null);
 	let overStatus = $state<TaskStatus | null>(null);
 	let boardQuery = $state('');
+	let boardPriority = $state<'all' | Priority>('all');
+	let boardAssignee = $state<'all' | 'none' | string>('all');
+
+	function clearBoardFilters() {
+		boardQuery = '';
+		boardPriority = 'all';
+		boardAssignee = 'all';
+	}
 
 	function matchesQuery(task: Task): boolean {
 		const q = boardQuery.trim().toLowerCase();
-		if (!q) return true;
-		return (
+		const matchesText =
+			!q ||
 			task.title.toLowerCase().includes(q) ||
 			task.description.toLowerCase().includes(q) ||
-			task.tags.some((t) => t.toLowerCase().includes(q))
-		);
+			task.tags.some((t) => t.toLowerCase().includes(q));
+		if (!matchesText) return false;
+		if (boardPriority !== 'all' && task.priority !== boardPriority) return false;
+		if (boardAssignee === 'none') {
+			if (task.assigneeId) return false;
+		} else if (boardAssignee !== 'all' && task.assigneeId !== boardAssignee) {
+			return false;
+		}
+		return true;
 	}
 
 	type DragState = {
@@ -354,6 +369,99 @@
 	function toggleTaskExpand(taskId: string) {
 		expandedTaskId = expandedTaskId === taskId ? null : taskId;
 	}
+
+	// "Explain task" modal — a persistent conversation about a single task.
+	// It can only be closed via the ✕ button or Cancel (no backdrop click, no Esc).
+	let explainTarget = $state<Task | null>(null);
+	let explainMessages = $state<TaskChatMessage[]>([]);
+	let explainInput = $state('');
+	let explainBusy = $state(false);
+	let explainError = $state('');
+
+	function explainContext(task: Task): TaskContext {
+		const assignee = memberById(task.assigneeId);
+		return {
+			projectName: project?.name ?? '',
+			projectDescription: project?.description ?? '',
+			task: {
+				title: task.title,
+				description: task.description,
+				priority: task.priority,
+				estimate: task.estimate,
+				tags: task.tags,
+				assignee: assignee?.name ?? '',
+				assigneeRole: assignee?.role ?? ''
+			},
+			otherTasks: projectTasks
+				.filter((t) => t.id !== task.id)
+				.map((t) => ({
+					title: t.title,
+					status: taskStatusStyles[t.status].label,
+					assignee: memberById(t.assigneeId)?.name ?? ''
+				}))
+		};
+	}
+
+	async function handleExplain(task: Task) {
+		if (!project || !settings.aiApiKey || explainBusy) return;
+		explainTarget = task;
+		explainMessages = [];
+		explainError = '';
+		explainBusy = true;
+		try {
+			const text = await explainTask({
+				...explainContext(task),
+				apiKey: settings.aiApiKey,
+				model: settings.aiModel
+			});
+			explainMessages = [{ role: 'assistant', content: text }];
+		} catch (err) {
+			explainError = err instanceof Error ? err.message : String(err);
+		} finally {
+			explainBusy = false;
+		}
+	}
+
+	async function sendFollowUp() {
+		const question = explainInput.trim();
+		if (!question || !explainTarget || explainBusy || !settings.aiApiKey) return;
+		const history = explainMessages;
+		explainMessages = [...explainMessages, { role: 'user', content: question }];
+		explainInput = '';
+		explainError = '';
+		explainBusy = true;
+		try {
+			const text = await taskChatFollowUp({
+				context: explainContext(explainTarget),
+				history,
+				question,
+				apiKey: settings.aiApiKey,
+				model: settings.aiModel
+			});
+			explainMessages = [...explainMessages, { role: 'assistant', content: text }];
+		} catch (err) {
+			explainError = err instanceof Error ? err.message : String(err);
+		} finally {
+			explainBusy = false;
+		}
+	}
+
+	function closeExplain() {
+		explainTarget = null;
+		explainMessages = [];
+		explainInput = '';
+		explainError = '';
+	}
+
+	// Lock page scroll while the explain modal is open.
+	$effect(() => {
+		if (!explainTarget) return;
+		const previous = document.body.style.overflow;
+		document.body.style.overflow = 'hidden';
+		return () => {
+			document.body.style.overflow = previous;
+		};
+	});
 
 	let exporting = $state(false);
 	let exportError = $state('');
@@ -1611,7 +1719,7 @@
 				</button>
 			</div>
 		{/if}
-		<div class="mb-3 flex items-center gap-2">
+		<div class="mb-3 flex flex-wrap items-center gap-2">
 			<div class="relative w-full sm:max-w-xs">
 				<span
 					class="pointer-events-none absolute inset-y-0 left-3 flex items-center text-neutral-400"
@@ -1625,13 +1733,41 @@
 					bind:value={boardQuery}
 				/>
 			</div>
-			{#if boardQuery.trim()}
+			<select
+				class="rounded-lg border-neutral-300 bg-surface px-2.5 py-2 text-sm focus:border-indigo-500 focus:ring-indigo-500"
+				bind:value={boardPriority}
+				aria-label="Filter by priority"
+			>
+				<option value="all">All priorities</option>
+				{#each priorities as p (p)}
+					<option value={p}>{priorityStyles[p].label}</option>
+				{/each}
+			</select>
+			<select
+				class="rounded-lg border-neutral-300 bg-surface px-2.5 py-2 text-sm focus:border-indigo-500 focus:ring-indigo-500"
+				bind:value={boardAssignee}
+				aria-label="Filter by assignee"
+			>
+				<option value="all">All assignees</option>
+				<option value="none">Unassigned</option>
+				{#each members as m (m.id)}
+					<option value={m.id}>{m.name}</option>
+				{/each}
+			</select>
+			{#if boardQuery.trim() || boardPriority !== 'all' || boardAssignee !== 'all'}
 				<p class="text-xs text-neutral-400">
 					{projectTasks.filter(matchesQuery).length} match{projectTasks.filter(matchesQuery)
 						.length === 1
 						? ''
 						: 'es'}
 				</p>
+				<button
+					type="button"
+					class="text-xs font-medium text-indigo-600 hover:text-indigo-700"
+					onclick={clearBoardFilters}
+				>
+					Clear
+				</button>
 			{/if}
 		</div>
 		<div class="flex gap-4 overflow-x-auto pb-4">
@@ -1787,6 +1923,26 @@
 												</div>
 											{/if}
 										</dl>
+										<div class="flex items-center gap-2">
+											<button
+												type="button"
+												class="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50/60 px-2.5 py-1.5 text-xs font-medium text-indigo-700 transition-colors hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
+												onpointerdown={(event) => event.stopPropagation()}
+												onclick={(event) => {
+													event.stopPropagation();
+													handleExplain(task);
+												}}
+												disabled={!settings.aiApiKey}
+												title={
+													!settings.aiApiKey
+														? 'Add your DeepSeek API key in Settings → AI'
+														: undefined
+													}
+											>
+												<Sparkles size={13} />
+												Explain task
+											</button>
+										</div>
 									</div>
 								{/if}
 								<footer class="mt-3 flex items-center justify-between">
@@ -2135,3 +2291,133 @@
 	onConfirm={handleDeleteProject}
 	onCancel={() => (deleteProjectOpen = false)}
 />
+
+{#if explainTarget}
+	<div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+		<!-- Deliberately no click handler: the modal only closes via ✕ or Cancel. -->
+		<div class="absolute inset-0 bg-overlay" role="presentation"></div>
+		<div
+			class="relative flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-neutral-200"
+			role="dialog"
+			aria-modal="true"
+			aria-label="Explain task"
+		>
+			<header class="flex items-start gap-3 border-b border-neutral-100 px-5 py-4">
+				<span
+					class="flex size-9 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600"
+				>
+					<Sparkles size={17} />
+				</span>
+				<div class="min-w-0 flex-1">
+					<h2 class="truncate text-sm font-semibold text-neutral-900">
+						{explainTarget.title}
+					</h2>
+					<p class="mt-0.5 text-xs text-neutral-500">
+						AI-assisted walkthrough — ask follow-ups, the full project and task context is kept.
+					</p>
+				</div>
+				<button
+					type="button"
+					class="rounded-lg p-1.5 text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-700"
+					aria-label="Close"
+					onclick={closeExplain}
+				>
+					<X size={18} />
+				</button>
+			</header>
+
+			<div class="flex-1 space-y-3 overflow-y-auto px-5 py-4">
+				{#each explainMessages as message, i (i)}
+					{#if message.role === 'assistant'}
+						<div class="flex items-start gap-2.5">
+							<span
+								class="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-lg bg-indigo-600 text-white"
+							>
+								<Sparkles size={12} />
+							</span>
+							<div
+								class="max-w-[85%] rounded-xl rounded-tl-sm border border-indigo-100 bg-indigo-50/60 px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-line text-neutral-800"
+							>
+								{message.content}
+							</div>
+						</div>
+					{:else}
+						<div class="flex items-start justify-end gap-2.5">
+							<div
+								class="max-w-[85%] rounded-xl rounded-tr-sm border border-neutral-200 bg-surface px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-line text-neutral-800"
+							>
+								{message.content}
+							</div>
+							<span
+								class="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-lg bg-neutral-100 text-neutral-500"
+							>
+								<User size={12} />
+							</span>
+						</div>
+					{/if}
+				{/each}
+
+				{#if explainBusy}
+					<div class="flex items-start gap-2.5">
+						<span
+							class="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-lg bg-indigo-600 text-white"
+						>
+							<Sparkles size={12} />
+						</span>
+						<div
+							class="flex items-center gap-1.5 rounded-xl rounded-tl-sm border border-indigo-100 bg-indigo-50/60 px-3.5 py-3"
+						>
+							<span class="size-1.5 animate-pulse rounded-full bg-indigo-400"></span>
+							<span
+								class="size-1.5 animate-pulse rounded-full bg-indigo-400 [animation-delay:150ms]"
+							></span>
+							<span
+								class="size-1.5 animate-pulse rounded-full bg-indigo-400 [animation-delay:300ms]"
+							></span>
+						</div>
+					</div>
+				{/if}
+
+				{#if explainError}
+					<p class="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+						{explainError}
+					</p>
+				{/if}
+			</div>
+
+			<footer class="border-t border-neutral-100 px-5 py-3">
+				<form
+					class="flex items-center gap-2"
+					onsubmit={(event) => {
+						event.preventDefault();
+						sendFollowUp();
+					}}
+				>
+					<input
+						type="text"
+						placeholder="Ask a follow-up about this task…"
+						class="h-10 w-full rounded-lg border-neutral-300 bg-white px-3 text-sm focus:border-indigo-500 focus:ring-indigo-500"
+						bind:value={explainInput}
+						disabled={explainBusy}
+					/>
+					<button
+						type="submit"
+						class="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-lg bg-indigo-600 px-3.5 text-sm font-medium text-white transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
+						disabled={explainBusy || !explainInput.trim() || !settings.aiApiKey}
+					>
+						Send
+					</button>
+				</form>
+				<div class="mt-2 flex justify-end">
+					<button
+						type="button"
+						class="rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-xs font-medium text-neutral-600 transition-colors hover:bg-neutral-50"
+						onclick={closeExplain}
+					>
+						Cancel
+					</button>
+				</div>
+			</footer>
+		</div>
+	</div>
+{/if}
