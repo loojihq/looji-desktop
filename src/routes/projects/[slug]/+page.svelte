@@ -71,26 +71,13 @@
 		return order.filter((s) => core.includes(s) || settings.boardStatuses.includes(s));
 	});
 
-	// "What should I do next": overdue first, then soonest due, then the task's
-	// stored sequence (AI-published tasks keep their plan order), then priority.
+	// Columns display by the task's stored sequence (sortOrder), which the AI
+	// publish fills with the plan order and the user can now change by dragging.
 	const PRIORITY_WEIGHT: Record<Priority, number> = { urgent: 0, high: 1, medium: 2, low: 3 };
 
-	function compareLogicalOrder(a: Task, b: Task): number {
-		const now = Date.now();
-		const aOverdue = new Date(a.due).getTime() < now ? 1 : 0;
-		const bOverdue = new Date(b.due).getTime() < now ? 1 : 0;
-		if (aOverdue !== bOverdue) return bOverdue - aOverdue;
-		const dueDiff = new Date(a.due).getTime() - new Date(b.due).getTime();
-		if (dueDiff !== 0) return dueDiff;
-		const orderDiff = a.sortOrder - b.sortOrder;
-		if (orderDiff !== 0) return orderDiff;
-		const priorityDiff = PRIORITY_WEIGHT[a.priority] - PRIORITY_WEIGHT[b.priority];
-		if (priorityDiff !== 0) return priorityDiff;
-		return a.title.localeCompare(b.title);
-	}
-
 	// Disabled statuses fold into their neighbours so no task ever disappears:
-	// backlog → To do, in_review → In progress.
+	// backlog → To do, in_review → In progress. Folded tasks keep their own
+	// sequence and append after the visible status's cards.
 	function tasksInColumn(status: TaskStatus) {
 		if (!project) return [];
 		const included =
@@ -99,13 +86,19 @@
 				: status === 'in_progress' && !settings.boardStatuses.includes('in_review')
 					? ['in_progress', 'in_review']
 					: [status];
-		const rows = tasks.filter(
-			(task) =>
-				task.projectId === project.id && included.includes(task.status) && matchesQuery(task)
-		);
-		return status === 'todo' || status === 'in_progress'
-			? rows.sort(compareLogicalOrder)
-			: rows;
+		return tasks
+			.filter(
+				(task) =>
+					task.projectId === project.id && included.includes(task.status) && matchesQuery(task)
+			)
+			.sort(
+				(a, b) =>
+					a.sortOrder +
+						(a.status !== status ? 100000 : 0) -
+						(b.sortOrder + (b.status !== status ? 100000 : 0)) ||
+					PRIORITY_WEIGHT[a.priority] - PRIORITY_WEIGHT[b.priority] ||
+					a.title.localeCompare(b.title)
+			);
 	}
 
 	const openCount = $derived(
@@ -164,6 +157,23 @@
 	let drag = $state<DragState | null>(null);
 	let pendingDrag = $state<PendingDrag | null>(null);
 	let suppressClick = $state(false);
+	let dropColumn = $state<TaskStatus | null>(null);
+	let dropIndex = $state(-1);
+	let longPressTimer: ReturnType<typeof setTimeout> | null = null;
+
+	function activateDrag() {
+		if (!pendingDrag) return;
+		draggingId = pendingDrag.taskId;
+		drag = {
+			taskId: pendingDrag.taskId,
+			x: pendingDrag.startX,
+			y: pendingDrag.startY,
+			offsetX: pendingDrag.offsetX,
+			offsetY: pendingDrag.offsetY,
+			width: pendingDrag.width
+		};
+		pendingDrag = null;
+	}
 
 	function startDrag(event: PointerEvent, task: Task) {
 		if (event.button !== 0) return;
@@ -180,6 +190,13 @@
 		window.addEventListener('pointermove', onDragMove);
 		window.addEventListener('pointerup', onDragEnd);
 		window.addEventListener('pointercancel', onDragEnd);
+		// Grab the tile on long press even when the cursor hasn't moved yet;
+		// a plain tap releases before the timer fires and still just expands.
+		if (longPressTimer) clearTimeout(longPressTimer);
+		longPressTimer = setTimeout(() => {
+			longPressTimer = null;
+			activateDrag();
+		}, 400);
 	}
 
 	function onDragMove(event: PointerEvent) {
@@ -189,32 +206,51 @@
 				event.clientY - pendingDrag.startY
 			);
 			if (moved < 6) return;
-			draggingId = pendingDrag.taskId;
-			drag = {
-				taskId: pendingDrag.taskId,
-				x: event.clientX,
-				y: event.clientY,
-				offsetX: pendingDrag.offsetX,
-				offsetY: pendingDrag.offsetY,
-				width: pendingDrag.width
-			};
-			pendingDrag = null;
+			if (longPressTimer) {
+				clearTimeout(longPressTimer);
+				longPressTimer = null;
+			}
+			activateDrag();
 		}
 		if (!drag) return;
 		drag.x = event.clientX;
 		drag.y = event.clientY;
 		const el = document.elementFromPoint(event.clientX, event.clientY);
 		const column = el?.closest('[data-status]') as HTMLElement | null;
-		overStatus = column ? (column.dataset.status as TaskStatus) : null;
+		if (column) {
+			const status = column.dataset.status as TaskStatus;
+			overStatus = status;
+			// Compute where inside the column the card would land: the index of
+			// the card whose midpoint the pointer is above, or the end otherwise.
+			const cards = column.querySelectorAll<HTMLElement>('[data-task-id]');
+			let insertAt = cards.length;
+			for (let i = 0; i < cards.length; i++) {
+				const rect = cards[i].getBoundingClientRect();
+				if (event.clientY < rect.top + rect.height / 2) {
+					insertAt = i;
+					break;
+				}
+			}
+			dropColumn = status;
+			dropIndex = insertAt;
+		} else {
+			overStatus = null;
+			dropColumn = null;
+			dropIndex = -1;
+		}
 	}
 
 	function onDragEnd() {
+		if (longPressTimer) {
+			clearTimeout(longPressTimer);
+			longPressTimer = null;
+		}
 		if (drag) {
 			const { taskId } = drag;
-			if (overStatus) {
+			if (overStatus && dropColumn) {
 				const task = tasks.find((t) => t.id === taskId);
-				if (task && task.status !== overStatus) {
-					moveTask(taskId, overStatus);
+				if (task) {
+					void moveTask(taskId, dropColumn, dropIndex);
 				}
 			}
 			suppressClick = true;
@@ -224,6 +260,8 @@
 		overStatus = null;
 		drag = null;
 		pendingDrag = null;
+		dropColumn = null;
+		dropIndex = -1;
 		window.removeEventListener('pointermove', onDragMove);
 		window.removeEventListener('pointerup', onDragEnd);
 		window.removeEventListener('pointercancel', onDragEnd);
@@ -250,7 +288,13 @@
 		[...projectTasks].sort((a, b) => {
 			if (a.status === 'done' && b.status !== 'done') return 1;
 			if (a.status !== 'done' && b.status === 'done') return -1;
-			return compareLogicalOrder(a, b);
+			return (
+				a.sortOrder -
+					b.sortOrder ||
+				PRIORITY_WEIGHT[a.priority] -
+					PRIORITY_WEIGHT[b.priority] ||
+				a.title.localeCompare(b.title)
+			);
 		})
 	);
 
@@ -1984,9 +2028,15 @@
 					</header>
 
 					<div class="space-y-2">
-						{#each tasksInColumn(status) as task (task.id)}
+						{#each tasksInColumn(status) as task, i (task.id)}
+							{#if dropColumn === status && dropIndex === i}
+								<div
+									class="h-14 rounded-lg border-2 border-dashed border-indigo-400 bg-indigo-50/40"
+								></div>
+							{/if}
 							{@const assignee = memberById(task.assigneeId)}
 							<div
+								data-task-id={task.id}
 								onpointerdown={(event) => startDrag(event, task)}
 								onclick={() => {
 									if (suppressClick) {
@@ -2165,6 +2215,11 @@
 								</footer>
 							</div>
 						{/each}
+						{#if dropColumn === status && dropIndex === tasksInColumn(status).length}
+							<div
+								class="h-14 rounded-lg border-2 border-dashed border-indigo-400 bg-indigo-50/40"
+							></div>
+						{/if}
 					</div>
 
 					{#if addingStatus === status}

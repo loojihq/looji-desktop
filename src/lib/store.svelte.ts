@@ -691,10 +691,10 @@ export async function updateTask(
 	}
 }
 
-export async function moveTask(taskId: string, status: TaskStatus): Promise<void> {
+export async function moveTask(taskId: string, status: TaskStatus, index?: number): Promise<void> {
 	const database = requireDb();
 	const task = tasks.find((t) => t.id === taskId);
-	if (!task || task.status === status) return;
+	if (!task) return;
 	const previous = task.status;
 	const updatedAt = nowIso();
 	const project = projects.find((p) => p.id === task.projectId);
@@ -702,26 +702,60 @@ export async function moveTask(taskId: string, status: TaskStatus): Promise<void
 	const workEnd = project?.workEnd ?? 1020;
 	const workDays = project?.workDays ?? [1, 2, 3, 4, 5];
 
+	// Target position within the column's current order (dropped at the end
+	// when no explicit index is given).
+	const byOrder = (a: Task, b: Task) => a.sortOrder - b.sortOrder;
+	const columnTasks = tasks
+		.filter((t) => t.projectId === task.projectId && t.status === status && t.id !== taskId)
+		.sort(byOrder);
+	const insertAt = Math.max(0, Math.min(index ?? columnTasks.length, columnTasks.length));
+	if (previous === status) {
+		const currentIndex = tasks
+			.filter((t) => t.projectId === task.projectId && t.status === status)
+			.sort(byOrder)
+			.indexOf(task);
+		if (currentIndex === insertAt) return; // dropped where it already sits
+	}
+	columnTasks.splice(insertAt, 0, task);
+
 	// When work actually starts, re-base the due time on the real current moment
 	// plus the remaining estimate, counted across the project's working hours and
 	// workdays. The pre-recalc due is remembered so moving back can restore it.
 	const beforeDue = task.due;
 	let due = beforeDue;
 	let originalDue = task.originalDue;
-	if (status === 'in_progress' && task.estimate && task.estimate > 0) {
-		originalDue = beforeDue;
-		due = addWorkingHours(new Date(), task.estimate, workStart, workEnd, workDays).toISOString();
-	} else if (status === 'todo' || status === 'backlog') {
-		// Moving back out of progress resets the due date to the pre-recalc
-		// value. Tasks that never recorded one (e.g. created before the
-		// original_due column existed) reset to the project's target date.
-		if (task.originalDue) {
-			due = task.originalDue;
-			originalDue = '';
-		} else if (previous === 'in_progress' || previous === 'in_review') {
-			due = project?.due || beforeDue;
-			originalDue = '';
+	if (previous !== status) {
+		if (status === 'in_progress' && task.estimate && task.estimate > 0) {
+			originalDue = beforeDue;
+			due = addWorkingHours(new Date(), task.estimate, workStart, workEnd, workDays).toISOString();
+		} else if (status === 'todo' || status === 'backlog') {
+			// Moving back out of progress resets the due date to the pre-recalc
+			// value. Tasks that never recorded one (e.g. created before the
+			// original_due column existed) reset to the project's target date.
+			if (task.originalDue) {
+				due = task.originalDue;
+				originalDue = '';
+			} else if (previous === 'in_progress' || previous === 'in_review') {
+				due = project?.due || beforeDue;
+				originalDue = '';
+			}
 		}
+	}
+
+	// Renumber the affected column(s) so the displayed order stays contiguous.
+	const toRenumber: Task[] = [];
+	if (previous === status) {
+		toRenumber.push(...columnTasks);
+	} else {
+		const sourceColumn = tasks
+			.filter((t) => t.projectId === task.projectId && t.status === previous)
+			.sort(byOrder);
+		toRenumber.push(...sourceColumn, ...columnTasks);
+	}
+	for (const [order, t] of toRenumber.entries()) {
+		if (t.sortOrder === order) continue;
+		await database.execute('UPDATE tasks SET sort_order = ? WHERE id = ?', [order, t.id]);
+		t.sortOrder = order;
 	}
 
 	await database.execute(
