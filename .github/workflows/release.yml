@@ -73,8 +73,10 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The generated key is not password protected, so only the key itself
+          # is set. Do not add an empty TAURI_SIGNING_PRIVATE_KEY_PASSWORD env:
+          # tauri would try to decrypt the key with an empty password and fail.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'Workmaster ${{ github.ref_name }}'
