@@ -21,6 +21,8 @@ export type Project = {
 	memberIds: string[];
 	spec: string;
 	userStories: string[];
+	workStart: number;
+	workEnd: number;
 };
 
 export type TaskStatus = 'backlog' | 'todo' | 'in_progress' | 'in_review' | 'done';
@@ -79,6 +81,15 @@ export type AiDraft = {
 	spec: string;
 	userStories: string[];
 	tasks: AiDraftTask[];
+};
+
+export type SavedAiDraft = {
+	draft: AiDraft | null;
+	desires: string;
+	due: string;
+	specialties: string[];
+	included: Record<string, boolean>;
+	specialty: Record<string, string>;
 };
 
 export type EntityType = 'project' | 'task' | 'member' | 'settings' | 'activity';

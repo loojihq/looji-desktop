@@ -98,6 +98,24 @@ Respond with JSON only: {"specialties": ["Frontend", "Backend"]}`
 		.slice(0, 8);
 }
 
+/** Parses an estimate that the model may return as a number or a string like "4", "2.5h", "1-2 days". */
+function parseEstimate(value: unknown): number | null {
+	if (typeof value === 'number' && isFinite(value) && value > 0) {
+		return Math.round(value * 10) / 10;
+	}
+	if (typeof value === 'string') {
+		const match = value.match(/\d+(?:\.\d+)?/);
+		if (match) {
+			const parsed = parseFloat(match[0]);
+			if (isFinite(parsed) && parsed > 0) return Math.round(parsed * 10) / 10;
+		}
+	}
+	return null;
+}
+
+// Fallback hours by priority when the model omits an estimate entirely.
+const DEFAULT_ESTIMATE: Record<Priority, number> = { urgent: 4, high: 3, medium: 2, low: 1 };
+
 /**
  * Generates a draft (spec, user stories and tasks) for a project from the
  * user's free-form desires, due date and selected team members/specialties.
@@ -132,7 +150,7 @@ export async function generateAiDraft(input: {
       "description": "2-4 detailed sentences covering what to do, how to verify it, and any edge cases",
       "priority": "urgent | high | medium | low",
       "tags": ["one or two tags"],
-      "estimate_hours": "number of hours, e.g. 1, 2.5, 8",
+      "estimate_hours": "plain number of hours, e.g. 1, 2.5 or 8 (no units, no quotes)",
       "assignee": "exact member name from the provided list, or null"
     }
   ]
@@ -140,7 +158,7 @@ export async function generateAiDraft(input: {
 
 	const rules = `- Produce as many tasks as needed to cover the work comprehensively (typically 8-20+). Prefer smaller, more granular tasks over large ones — each task should be doable by one person in a day or less.
 - Every task needs a detailed description (what, how to verify, edge cases).
-- Give every task a realistic estimate_hours based on its complexity.
+- Every task MUST include estimate_hours as a plain JSON number (e.g. 3, 2.5, 8) — never a string like "3h" or "1-2 days".
 - Only assign tasks to member names from the provided team list; otherwise null.
 - Use only the allowed priority values.
 - Do not duplicate any existing task titles.`;
@@ -209,22 +227,22 @@ ${
 				.filter((t): t is Record<string, unknown> => typeof t === 'object' && t !== null)
 				.filter((t) => typeof t.title === 'string' && String(t.title).trim())
 				.map((t) => {
-					const estimate =
-						typeof t.estimate_hours === 'number' && isFinite(t.estimate_hours) && t.estimate_hours > 0
-							? Math.round(t.estimate_hours * 10) / 10
-							: null;
+					const priority = PRIORITIES.includes(t.priority as Priority)
+						? (t.priority as Priority)
+						: 'medium';
+					const estimate = parseEstimate(
+						t.estimate_hours ?? t.estimateHours ?? t.estimate ?? t.hours
+					);
 					return {
 						title: String(t.title).trim(),
 						description:
 							typeof t.description === 'string' ? t.description.trim() : '',
-						priority: PRIORITIES.includes(t.priority as Priority)
-							? (t.priority as Priority)
-							: 'medium',
+						priority,
 						tags: Array.isArray(t.tags)
 							? t.tags.filter((x): x is string => typeof x === 'string').map((x) => x.trim()).filter(Boolean)
 							: [],
 						assignee: typeof t.assignee === 'string' ? t.assignee : undefined,
-						estimateHours: estimate
+						estimateHours: estimate ?? DEFAULT_ESTIMATE[priority]
 					};
 				})
 		: [];

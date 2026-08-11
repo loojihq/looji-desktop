@@ -7,11 +7,12 @@ import type {
 	Priority,
 	Project,
 	ProjectStatus,
+	SavedAiDraft,
 	Settings,
 	Task,
 	TaskStatus
 } from './types';
-import { daysFromNow } from './utils';
+import { addWorkingHours, daysFromNow, minutesToTime } from './utils';
 
 type MemberRow = {
 	id: string;
@@ -33,6 +34,8 @@ type ProjectRow = {
 	color: string;
 	spec: string;
 	user_stories: string;
+	work_start: number;
+	work_end: number;
 };
 
 type ProjectMemberRow = { project_id: string; member_id: string };
@@ -166,7 +169,9 @@ function projectFromRow(row: ProjectRow, memberIds: string[]): Project {
 		color: row.color,
 		memberIds,
 		spec: row.spec ?? '',
-		userStories
+		userStories,
+		workStart: row.work_start ?? 540,
+		workEnd: row.work_end ?? 1020
 	};
 }
 
@@ -441,7 +446,9 @@ export async function createProject(input: {
 		color: 'indigo',
 		memberIds: [],
 		spec: '',
-		userStories: []
+		userStories: [],
+		workStart: 540,
+		workEnd: 1020
 	};
 	await database.execute(
 		'INSERT INTO projects (id, slug, name, description, status, progress, due, color) VALUES (?, ?, ?, ?, ?, 0, ?, ?)',
@@ -456,7 +463,14 @@ export async function createProject(input: {
 
 export async function updateProject(
 	id: string,
-	input: { name: string; description: string; status: ProjectStatus; due: string }
+	input: {
+		name: string;
+		description: string;
+		status: ProjectStatus;
+		due: string;
+		workStart?: number;
+		workEnd?: number;
+	}
 ): Promise<void> {
 	const project = projects.find((p) => p.id === id);
 	if (!project) return;
@@ -481,14 +495,24 @@ export async function updateProject(
 	}
 	if (project.status !== input.status) changes.status = { from: project.status, to: input.status };
 	if (project.due !== input.due) changes.due = { from: project.due, to: input.due };
+	const workStart = input.workStart ?? project.workStart;
+	const workEnd = input.workEnd ?? project.workEnd;
+	if (project.workStart !== workStart || project.workEnd !== workEnd) {
+		changes.workingHours = {
+			from: `${minutesToTime(project.workStart)}–${minutesToTime(project.workEnd)}`,
+			to: `${minutesToTime(workStart)}–${minutesToTime(workEnd)}`
+		};
+	}
 	await database.execute(
-		'UPDATE projects SET name = ?, description = ?, status = ?, due = ? WHERE id = ?',
-		[name, input.description.trim(), input.status, input.due, id]
+		'UPDATE projects SET name = ?, description = ?, status = ?, due = ?, work_start = ?, work_end = ? WHERE id = ?',
+		[name, input.description.trim(), input.status, input.due, workStart, workEnd, id]
 	);
 	project.name = name;
 	project.description = input.description.trim();
 	project.status = input.status;
 	project.due = input.due;
+	project.workStart = workStart;
+	project.workEnd = workEnd;
 	if (Object.keys(changes).length > 0) {
 		await logAudit('project', id, 'updated', `Updated project "${project.name}"`, changes);
 	}
@@ -531,7 +555,7 @@ export async function createTask(input: {
 		assigneeId: input.assigneeId ?? null,
 		status: input.status ?? 'backlog',
 		priority: input.priority ?? 'medium',
-		estimate: input.estimate ?? null,
+		estimate: input.estimate && input.estimate > 0 ? input.estimate : null,
 		sortOrder: input.sortOrder ?? 0,
 		due: input.due ?? daysFromNow(7),
 		tags: input.tags ?? [],
@@ -547,7 +571,7 @@ export async function createTask(input: {
 			task.assigneeId,
 			task.status,
 			task.priority,
-			task.estimate,
+			task.estimate ?? 0,
 			task.sortOrder,
 			task.due,
 			JSON.stringify(task.tags),
@@ -599,7 +623,8 @@ export async function updateTask(
 	}
 	if (task.status !== input.status) changes.status = { from: task.status, to: input.status };
 	if (task.priority !== input.priority) changes.priority = { from: task.priority, to: input.priority };
-	const nextEstimate = input.estimate ?? task.estimate;
+	const nextEstimateRaw = input.estimate ?? task.estimate;
+	const nextEstimate = nextEstimateRaw && nextEstimateRaw > 0 ? nextEstimateRaw : null;
 	if (task.estimate !== nextEstimate) {
 		changes.estimate = { from: task.estimate, to: nextEstimate };
 	}
@@ -618,7 +643,7 @@ export async function updateTask(
 			input.assigneeId,
 			input.status,
 			input.priority,
-			nextEstimate,
+			nextEstimate ?? 0,
 			input.due,
 			JSON.stringify(nextTags),
 			updatedAt,
@@ -646,16 +671,39 @@ export async function moveTask(taskId: string, status: TaskStatus): Promise<void
 	if (!task || task.status === status) return;
 	const previous = task.status;
 	const updatedAt = nowIso();
-	await database.execute('UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?', [
+	// When work actually starts, re-base the due time on the real current moment
+	// plus the remaining estimate, counted across the project's working hours
+	// (default 9am-5pm, Mon-Fri).
+	const originalDue = task.due;
+	let due = originalDue;
+	if (status === 'in_progress' && task.estimate && task.estimate > 0) {
+		const project = projects.find((p) => p.id === task.projectId);
+		due = addWorkingHours(
+			new Date(),
+			task.estimate,
+			project?.workStart ?? 540,
+			project?.workEnd ?? 1020
+		).toISOString();
+	}
+	await database.execute('UPDATE tasks SET status = ?, due = ?, updated_at = ? WHERE id = ?', [
 		status,
+		due,
 		updatedAt,
 		taskId
 	]);
 	task.status = status;
+	task.due = due;
 	task.updatedAt = updatedAt;
-	await logAudit('task', taskId, 'moved', `Moved "${task.title}" from ${taskStatusStyles[previous].label} to ${taskStatusStyles[status].label}`, {
-		status: { from: previous, to: status }
-	});
+	await logAudit(
+		'task',
+		taskId,
+		'moved',
+		`Moved "${task.title}" from ${taskStatusStyles[previous].label} to ${taskStatusStyles[status].label}`,
+		{
+			status: { from: previous, to: status },
+			...(due !== originalDue ? { due: { from: originalDue, to: due } } : {})
+		}
+	);
 }
 
 export async function toggleTaskDone(taskId: string): Promise<void> {
@@ -770,4 +818,60 @@ export async function publishAiDraft(
 		{ ai: { from: null, to: `spec + ${draft.userStories.length} stories + ${count} tasks` } }
 	);
 	return count;
+}
+
+type AiDraftRow = {
+	draft: string;
+	desires: string;
+	due: string;
+	specialties: string;
+	included: string;
+	specialty: string;
+};
+
+/** Persists the in-progress AI draft so it can be resumed later. */
+export async function saveAiDraft(projectId: string, data: SavedAiDraft): Promise<void> {
+	const database = requireDb();
+	await database.execute(
+		'INSERT INTO ai_drafts (project_id, draft, desires, due, specialties, included, specialty, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(project_id) DO UPDATE SET draft = excluded.draft, desires = excluded.desires, due = excluded.due, specialties = excluded.specialties, included = excluded.included, specialty = excluded.specialty, updated_at = excluded.updated_at',
+		[
+			projectId,
+			JSON.stringify(data.draft),
+			data.desires,
+			data.due,
+			JSON.stringify(data.specialties),
+			JSON.stringify(data.included),
+			JSON.stringify(data.specialty),
+			nowIso()
+		]
+	);
+}
+
+/** Loads a saved draft for a project, or null when none exists. */
+export async function loadAiDraft(projectId: string): Promise<SavedAiDraft | null> {
+	const database = requireDb();
+	const rows = await database.select<AiDraftRow[]>(
+		'SELECT draft, desires, due, specialties, included, specialty FROM ai_drafts WHERE project_id = ?',
+		[projectId]
+	);
+	const row = rows[0];
+	if (!row) return null;
+	try {
+		return {
+			draft: row.draft ? (JSON.parse(row.draft) as AiDraft) : null,
+			desires: row.desires ?? '',
+			due: row.due ?? '',
+			specialties: JSON.parse(row.specialties || '[]') as string[],
+			included: JSON.parse(row.included || '{}') as Record<string, boolean>,
+			specialty: JSON.parse(row.specialty || '{}') as Record<string, string>
+		};
+	} catch {
+		return null;
+	}
+}
+
+/** Removes a saved draft (e.g. after publishing). */
+export async function clearAiDraft(projectId: string): Promise<void> {
+	const database = requireDb();
+	await database.execute('DELETE FROM ai_drafts WHERE project_id = ?', [projectId]);
 }

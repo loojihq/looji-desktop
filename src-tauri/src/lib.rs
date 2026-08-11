@@ -139,6 +139,33 @@ pub fn run() {
             sql: "ALTER TABLE tasks ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 16,
+            description: "create_ai_drafts",
+            sql: "CREATE TABLE IF NOT EXISTS ai_drafts (
+                project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+                draft TEXT NOT NULL DEFAULT 'null',
+                desires TEXT NOT NULL DEFAULT '',
+                due TEXT NOT NULL DEFAULT '',
+                specialties TEXT NOT NULL DEFAULT '[]',
+                included TEXT NOT NULL DEFAULT '{}',
+                specialty TEXT NOT NULL DEFAULT '{}',
+                updated_at TEXT NOT NULL DEFAULT ''
+            )",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 17,
+            description: "add_projects_work_start",
+            sql: "ALTER TABLE projects ADD COLUMN work_start INTEGER NOT NULL DEFAULT 540",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 18,
+            description: "add_projects_work_end",
+            sql: "ALTER TABLE projects ADD COLUMN work_end INTEGER NOT NULL DEFAULT 1020",
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()

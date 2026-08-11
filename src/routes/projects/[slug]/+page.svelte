@@ -11,16 +11,20 @@
 	import { exportDraftPdf, exportProjectPdf } from '$lib/pdf';
 	import { projectAccents, priorityStyles, projectStatusStyles, taskStatusStyles } from '$lib/badges';
 	import {
+		clearAiDraft,
 		createTask,
 		deleteProject,
 		deleteTask,
+		loadAiDraft,
 		memberById,
 		members,
 		moveTask,
 		projectProgress,
 		projects,
 		publishAiDraft,
+		saveAiDraft,
 		settings,
+		status,
 		tasks,
 		updateProject,
 		updateSetting,
@@ -34,10 +38,20 @@
 		type Member,
 		type Priority,
 		type ProjectStatus,
+		type SavedAiDraft,
 		type Task,
 		type TaskStatus
 	} from '$lib/types';
-	import { daysFromNow, dueLabel, formatDate, formatEstimate, isOverdue, relativeTime } from '$lib/utils';
+	import {
+		daysFromNow,
+		dueLabel,
+		formatDate,
+		formatEstimate,
+		isOverdue,
+		minutesToTime,
+		relativeTime,
+		timeToMinutes
+	} from '$lib/utils';
 
 	const project = $derived(projects.find((p) => p.slug === page.params.slug));
 	const projectMembers = $derived(
@@ -278,6 +292,8 @@
 	let projDescription = $state('');
 	let projStatus = $state<ProjectStatus>('planning');
 	let projDue = $state('');
+	let projWorkStart = $state('09:00');
+	let projWorkEnd = $state('17:00');
 	let projError = $state('');
 
 	let editTask = $state<Task | null>(null);
@@ -374,6 +390,55 @@
 	let aiNeedsKey = $state(false);
 	let aiStatusMessage = $state('');
 	let newStory = $state('');
+	let draftLoaded = $state(false);
+
+	// Resume a previously saved draft when the project opens.
+	$effect(() => {
+		if (!project || !status.ready || draftLoaded) return;
+		draftLoaded = true;
+		loadSavedDraft(project.id);
+	});
+
+	async function loadSavedDraft(projectId: string) {
+		const saved = await loadAiDraft(projectId);
+		if (!saved) return;
+		aiDraft = saved.draft;
+		aiDesires = saved.desires;
+		aiDue = saved.due;
+		aiSpecialties = saved.specialties;
+		aiIncluded = saved.included;
+		aiSpecialty = saved.specialty;
+		aiOpen = true;
+	}
+
+	// Auto-save the draft (debounced) so it survives navigation and app closes.
+	$effect(() => {
+		if (!project || (!aiDraft && !aiDesires.trim())) return;
+		const payload: SavedAiDraft = {
+			draft: aiDraft,
+			desires: aiDesires,
+			due: aiDue,
+			specialties: aiSpecialties,
+			included: aiIncluded,
+			specialty: aiSpecialty
+		};
+		const timer = setTimeout(() => {
+			saveAiDraft(project.id, payload);
+		}, 700);
+		return () => clearTimeout(timer);
+	});
+
+	function persistDraftNow() {
+		if (!project || (!aiDraft && !aiDesires.trim())) return;
+		saveAiDraft(project.id, {
+			draft: aiDraft,
+			desires: aiDesires,
+			due: aiDue,
+			specialties: aiSpecialties,
+			included: aiIncluded,
+			specialty: aiSpecialty
+		});
+	}
 
 	const aiStatusMessages = [
 		'Understanding your request…',
@@ -402,13 +467,14 @@
 		if (!project) return;
 		aiOpen = true;
 		aiPublished = false;
-		aiDraft = null;
 		aiError = '';
 		aiNeedsKey = !settings.aiApiKey;
-		aiDue = project.due.slice(0, 10);
-		aiIncluded = Object.fromEntries(members.map((m) => [m.id, true]));
-		aiSpecialty = Object.fromEntries(members.map((m) => [m.id, '']));
-		if (!aiNeedsKey) suggestSpecialtiesNow();
+		if (!aiDue) aiDue = project.due.slice(0, 10);
+		if (Object.keys(aiIncluded).length === 0) {
+			aiIncluded = Object.fromEntries(members.map((m) => [m.id, true]));
+			aiSpecialty = Object.fromEntries(members.map((m) => [m.id, '']));
+		}
+		if (!aiNeedsKey && aiSpecialties.length === 0) suggestSpecialtiesNow();
 	}
 
 	function closeAiPanel() {
@@ -468,6 +534,7 @@
 				aiError = 'The AI returned an empty plan. Try rephrasing your desires.';
 			} else {
 				aiDraft = draft;
+				persistDraftNow();
 			}
 		} catch (err) {
 			aiError = err instanceof Error ? err.message : String(err);
@@ -493,6 +560,7 @@
 			}
 			const due = aiDue ? new Date(`${aiDue}T12:00:00`).toISOString() : project.due;
 			await publishAiDraft(project.id, aiDraft, due, assignments);
+			await clearAiDraft(project.id);
 			aiPublished = true;
 			aiDraft = null;
 			aiDesires = '';
@@ -509,6 +577,8 @@
 		projDescription = project.description;
 		projStatus = project.status;
 		projDue = project.due.slice(0, 10);
+		projWorkStart = minutesToTime(project.workStart);
+		projWorkEnd = minutesToTime(project.workEnd);
 		projError = '';
 		projectEditOpen = true;
 	}
@@ -522,11 +592,19 @@
 		if (!project || !projName.trim()) return;
 		projError = '';
 		try {
+			const workStart = timeToMinutes(projWorkStart);
+			const workEnd = timeToMinutes(projWorkEnd);
+			if (workEnd <= workStart) {
+				projError = 'Working hours end must be after the start time.';
+				return;
+			}
 			await updateProject(project.id, {
 				name: projName.trim(),
 				description: projDescription.trim(),
 				status: projStatus,
-				due: projDue ? new Date(`${projDue}T12:00:00`).toISOString() : daysFromNow(30)
+				due: projDue ? new Date(`${projDue}T12:00:00`).toISOString() : daysFromNow(30),
+				workStart,
+				workEnd
 			});
 			cancelProjectEdit();
 		} catch (err) {
@@ -914,6 +992,28 @@
 						class="w-full rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
 						bind:value={projDescription}
 					></textarea>
+				</div>
+				<div class="lg:col-span-4">
+					<p class="mb-1 block text-xs font-medium text-neutral-600">Working hours</p>
+					<div class="flex flex-wrap items-center gap-2">
+						<input
+							id="proj-work-start"
+							type="time"
+							class="rounded-lg border-neutral-300 bg-white px-3 py-1.5 text-sm focus:border-indigo-500 focus:ring-indigo-500"
+							bind:value={projWorkStart}
+						/>
+						<span class="text-sm text-neutral-400">to</span>
+						<input
+							id="proj-work-end"
+							type="time"
+							class="rounded-lg border-neutral-300 bg-white px-3 py-1.5 text-sm focus:border-indigo-500 focus:ring-indigo-500"
+							bind:value={projWorkEnd}
+						/>
+						<span class="text-xs text-neutral-400">
+							— when a task moves into In progress, its due time is now + estimate, counted
+							across these hours (weekdays only).
+						</span>
+					</div>
 				</div>
 			</div>
 			{#if projError}
@@ -1348,6 +1448,7 @@
 											min="0"
 											step="0.5"
 											placeholder="hrs"
+											title="Estimated hours — 1 day = 8 working hours"
 											class="w-20 rounded-lg border-neutral-300 bg-surface px-2 py-1.5 text-sm focus:border-indigo-500 focus:ring-indigo-500"
 											bind:value={task.estimateHours}
 											aria-label="Estimate in hours"
@@ -1533,7 +1634,14 @@
 											</div>
 											<div class="flex items-center gap-1">
 												<dt class="text-neutral-400">Estimate</dt>
-												<dd class="font-medium text-neutral-700">
+												<dd
+													class="font-medium text-neutral-700"
+													title={
+														task.estimate
+															? `Estimate: ${formatEstimate(task.estimate)} (1 day = 8 hours)`
+															: undefined
+													}
+												>
 													{formatEstimate(task.estimate) || '—'}
 												</dd>
 											</div>
@@ -1575,7 +1683,8 @@
 										{/if}
 										{#if formatEstimate(task.estimate)}
 											<span
-													class="rounded-md bg-indigo-50 px-1.5 py-0.5 text-[11px] font-medium text-indigo-700"
+												class="rounded-md bg-indigo-50 px-1.5 py-0.5 text-[11px] font-medium text-indigo-700"
+												title={`Estimate: ${formatEstimate(task.estimate)} (1 day = 8 hours)`}
 											>
 												{formatEstimate(task.estimate)}
 											</span>
@@ -1682,7 +1791,15 @@
 									{/if}
 								</td>
 								<td class="px-3 py-3 text-sm text-neutral-600">
-									{formatEstimate(task.estimate) || '—'}
+									<span
+										title={
+											task.estimate
+												? `Estimate: ${formatEstimate(task.estimate)} (1 day = 8 hours)`
+												: undefined
+										}
+									>
+										{formatEstimate(task.estimate) || '—'}
+									</span>
 								</td>
 								<td
 									class="px-5 py-3 text-sm {isOverdue(task.due) && task.status !== 'done'
@@ -1785,6 +1902,7 @@
 							{#if row.estimate > 0}
 								<span
 									class="ml-auto rounded-md bg-indigo-50 px-2 py-0.5 text-xs font-semibold text-indigo-700"
+									title={`Estimate: ${formatEstimate(row.estimate)} (1 day = 8 hours)`}
 								>
 									~{formatEstimate(row.estimate)}
 								</span>
