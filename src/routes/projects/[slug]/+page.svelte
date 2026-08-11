@@ -52,6 +52,24 @@
 		return order.filter((s) => core.includes(s) || settings.boardStatuses.includes(s));
 	});
 
+	// "What should I do next": overdue first, then soonest due, then the task's
+	// stored sequence (AI-published tasks keep their plan order), then priority.
+	const PRIORITY_WEIGHT: Record<Priority, number> = { urgent: 0, high: 1, medium: 2, low: 3 };
+
+	function compareLogicalOrder(a: Task, b: Task): number {
+		const now = Date.now();
+		const aOverdue = new Date(a.due).getTime() < now ? 1 : 0;
+		const bOverdue = new Date(b.due).getTime() < now ? 1 : 0;
+		if (aOverdue !== bOverdue) return bOverdue - aOverdue;
+		const dueDiff = new Date(a.due).getTime() - new Date(b.due).getTime();
+		if (dueDiff !== 0) return dueDiff;
+		const orderDiff = a.sortOrder - b.sortOrder;
+		if (orderDiff !== 0) return orderDiff;
+		const priorityDiff = PRIORITY_WEIGHT[a.priority] - PRIORITY_WEIGHT[b.priority];
+		if (priorityDiff !== 0) return priorityDiff;
+		return a.title.localeCompare(b.title);
+	}
+
 	// Disabled statuses fold into their neighbours so no task ever disappears:
 	// backlog → To do, in_review → In progress.
 	function tasksInColumn(status: TaskStatus) {
@@ -62,9 +80,12 @@
 				: status === 'in_progress' && !settings.boardStatuses.includes('in_review')
 					? ['in_progress', 'in_review']
 					: [status];
-		return tasks.filter(
+		const rows = tasks.filter(
 			(task) => task.projectId === project.id && included.includes(task.status)
 		);
+		return status === 'todo' || status === 'in_progress'
+			? rows.sort(compareLogicalOrder)
+			: rows;
 	}
 
 	const openCount = $derived(
@@ -183,7 +204,7 @@
 		[...projectTasks].sort((a, b) => {
 			if (a.status === 'done' && b.status !== 'done') return 1;
 			if (a.status !== 'done' && b.status === 'done') return -1;
-			return new Date(a.due).getTime() - new Date(b.due).getTime();
+			return compareLogicalOrder(a, b);
 		})
 	);
 

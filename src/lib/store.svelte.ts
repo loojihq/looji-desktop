@@ -46,6 +46,7 @@ type TaskRow = {
 	status: string;
 	priority: string;
 	estimate: number;
+	sort_order: number;
 	due: string;
 	tags: string;
 	updated_at: string;
@@ -185,6 +186,7 @@ function taskFromRow(row: TaskRow): Task {
 		status: row.status as TaskStatus,
 		priority: row.priority as Priority,
 		estimate: row.estimate > 0 ? row.estimate : null,
+		sortOrder: row.sort_order ?? 0,
 		due: row.due,
 		tags,
 		updatedAt: row.updated_at
@@ -513,6 +515,7 @@ export async function createTask(input: {
 	priority?: Priority;
 	assigneeId?: string | null;
 	estimate?: number | null;
+	sortOrder?: number;
 	due?: string;
 	tags?: string[];
 }): Promise<void> {
@@ -529,12 +532,13 @@ export async function createTask(input: {
 		status: input.status ?? 'backlog',
 		priority: input.priority ?? 'medium',
 		estimate: input.estimate ?? null,
+		sortOrder: input.sortOrder ?? 0,
 		due: input.due ?? daysFromNow(7),
 		tags: input.tags ?? [],
 		updatedAt: nowIso()
 	};
 	await database.execute(
-		'INSERT INTO tasks (id, title, description, project_id, assignee_id, status, priority, estimate, due, tags, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+		'INSERT INTO tasks (id, title, description, project_id, assignee_id, status, priority, estimate, sort_order, due, tags, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
 		[
 			task.id,
 			task.title,
@@ -544,6 +548,7 @@ export async function createTask(input: {
 			task.status,
 			task.priority,
 			task.estimate,
+			task.sortOrder,
 			task.due,
 			JSON.stringify(task.tags),
 			task.updatedAt
@@ -741,7 +746,7 @@ export async function publishAiDraft(
 	project.userStories = draft.userStories;
 
 	let count = 0;
-	for (const task of draft.tasks) {
+	for (const [index, task] of draft.tasks.entries()) {
 		if (!task.title.trim()) continue;
 		await createTask({
 			title: task.title,
@@ -751,6 +756,7 @@ export async function publishAiDraft(
 			priority: task.priority,
 			assigneeId: task.assignee ? (assignments[task.assignee] ?? null) : null,
 			estimate: task.estimateHours ?? null,
+			sortOrder: index,
 			due,
 			tags: task.tags
 		});

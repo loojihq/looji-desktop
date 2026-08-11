@@ -133,6 +133,12 @@ pub fn run() {
             sql: "ALTER TABLE tasks ADD COLUMN estimate REAL NOT NULL DEFAULT 0",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 15,
+            description: "add_tasks_sort_order",
+            sql: "ALTER TABLE tasks ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0",
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()

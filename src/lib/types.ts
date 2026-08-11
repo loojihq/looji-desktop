@@ -36,6 +36,7 @@ export type Task = {
 	status: TaskStatus;
 	priority: Priority;
 	estimate: number | null;
+	sortOrder: number;
 	due: string;
 	tags: string[];
 	updatedAt: string;
