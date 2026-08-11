@@ -212,6 +212,44 @@ pub fn run() {
             )",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 25,
+            description: "create_workspaces",
+            sql: "CREATE TABLE IF NOT EXISTS workspaces (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT ''
+            );
+            ALTER TABLE projects ADD COLUMN workspace_id TEXT NOT NULL DEFAULT '';
+            ALTER TABLE members ADD COLUMN workspace_id TEXT NOT NULL DEFAULT '';
+            CREATE TABLE IF NOT EXISTS workspace_settings (
+                workspace_id TEXT NOT NULL,
+                key TEXT NOT NULL,
+                value TEXT NOT NULL,
+                PRIMARY KEY (workspace_id, key)
+            );
+            INSERT OR IGNORE INTO workspaces (id, name, created_at) VALUES ('default', COALESCE((SELECT json_extract(value, '$') FROM settings WHERE key = 'workspaceName'), 'My workspace'), '');
+            INSERT INTO workspace_settings (workspace_id, key, value) SELECT 'default', key, value FROM settings WHERE key IN ('workspaceName','timezone','boardStatuses','autoEscalate','notifAssignments','notifDigest','notifMentions','notifProduct');
+            UPDATE projects SET workspace_id = 'default' WHERE workspace_id = '';
+            UPDATE members SET workspace_id = 'default' WHERE workspace_id = '';
+            DELETE FROM settings WHERE key IN ('workspaceName','timezone','boardStatuses','autoEscalate','notifAssignments','notifDigest','notifMentions','notifProduct')",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 26,
+            description: "workspace_icons_and_scoped_audit",
+            sql: "ALTER TABLE workspaces ADD COLUMN icon_color TEXT NOT NULL DEFAULT 'indigo';
+            ALTER TABLE workspaces ADD COLUMN icon_emoji TEXT NOT NULL DEFAULT '';
+            ALTER TABLE audit_log ADD COLUMN workspace_id TEXT NOT NULL DEFAULT '';
+            UPDATE audit_log SET workspace_id = 'default' WHERE workspace_id = ''",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 27,
+            description: "workspace_image_icon",
+            sql: "ALTER TABLE workspaces ADD COLUMN icon TEXT NOT NULL DEFAULT ''",
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()

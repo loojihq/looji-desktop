@@ -1,10 +1,29 @@
 <script lang="ts">
 	import { Trash2 } from '@lucide/svelte';
+	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import Select from '$lib/components/Select.svelte';
 	import { fetchDeepSeekModels, testDeepSeekConnection } from '$lib/ai';
-	import { settings, updateSetting } from '$lib/store.svelte';
+	import {
+		currentWorkspaceState,
+		deleteWorkspace,
+		settings,
+		updateSetting,
+		workspaces
+	} from '$lib/store.svelte';
 
 	let section = $state('Appearance');
+	let wsDeleteOpen = $state(false);
+	let wsDeleteError = $state('');
+
+	async function handleDeleteWorkspace() {
+		wsDeleteError = '';
+		try {
+			await deleteWorkspace(currentWorkspaceState.id);
+			wsDeleteOpen = false;
+		} catch (err) {
+			wsDeleteError = err instanceof Error ? err.message : String(err);
+		}
+	}
 
 	const sections = ['Appearance', 'AI', 'Notifications', 'Workspace'];
 
@@ -287,11 +306,18 @@
 				<div class="mt-6 border-t border-neutral-100 pt-5">
 					<p class="text-sm font-medium text-red-700">Danger zone</p>
 					<p class="mt-0.5 text-sm text-neutral-500">
-						Deleting the workspace removes all projects and tasks.
+						Deleting the current workspace ({settings.workspaceName}) removes all of its
+						projects, tasks and members.
 					</p>
+					{#if wsDeleteError}
+						<p class="mt-2 text-xs text-red-600">{wsDeleteError}</p>
+					{/if}
 					<button
 						type="button"
-						class="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700 transition-colors hover:bg-red-100"
+						class="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+						onclick={() => (wsDeleteOpen = true)}
+						disabled={workspaces.length <= 1}
+						title={workspaces.length <= 1 ? 'There must be at least one workspace.' : undefined}
 					>
 						<Trash2 size={15} />
 						Delete workspace
@@ -316,3 +342,15 @@
 		></span>
 	</button>
 {/snippet}
+
+<ConfirmDialog
+	open={wsDeleteOpen}
+	title="Delete workspace?"
+	message={`This permanently deletes "${settings.workspaceName}" and everything in it — all projects, tasks and members.`}
+	confirmLabel="Delete workspace"
+	onConfirm={handleDeleteWorkspace}
+	onCancel={() => {
+		wsDeleteOpen = false;
+		wsDeleteError = '';
+	}}
+/>

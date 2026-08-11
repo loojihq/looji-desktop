@@ -12,7 +12,8 @@ import type {
 	SavedAiDraft,
 	Settings,
 	Task,
-	TaskStatus
+	TaskStatus,
+	Workspace
 } from './types';
 import { addWorkingHours, daysFromNow, minutesToTime } from './utils';
 
@@ -72,6 +73,14 @@ type AuditRow = {
 
 type SettingsRow = { key: string; value: string };
 
+type WorkspaceRow = {
+	id: string;
+	name: string;
+	icon_color: string;
+	icon_emoji: string;
+	icon: string;
+};
+
 function assertProjectName(name: string): void {
 	const trimmed = name.trim();
 	if (!trimmed) throw new Error('Project name is required.');
@@ -114,24 +123,45 @@ let db: Database | null = null;
 let initPromise: Promise<void> | null = null;
 
 export const members = $state<Member[]>([]);
+
+export const workspaces = $state<Workspace[]>([]);
+// The active workspace id. Wrapped in an object because Svelte 5 disallows
+// reassigning an exported $state primitive.
+export const currentWorkspaceState = $state({ id: 'default' });
+
 export const projects = $state<Project[]>([]);
 export const tasks = $state<Task[]>([]);
 export const auditLog = $state<AuditEntry[]>([]);
 export const status = $state({ ready: false, error: null as string | null });
-export const settings = $state<Settings>({
+
+/** Settings keys that live per workspace (everything data-related). */
+const WORKSPACE_SETTING_KEYS = new Set([
+	'workspaceName',
+	'timezone',
+	'boardStatuses',
+	'autoEscalate',
+	'notifAssignments',
+	'notifDigest',
+	'notifMentions',
+	'notifProduct'
+]);
+
+const DEFAULT_SETTINGS: Settings = {
 	theme: 'system',
 	autoEscalate: true,
 	notifAssignments: true,
 	notifDigest: true,
 	notifMentions: true,
 	notifProduct: false,
-	workspaceName: 'Workmaster',
+	workspaceName: 'My workspace',
 	timezone: 'America/Los_Angeles',
 	aiApiKey: '',
 	aiModel: 'deepseek-chat',
 	aiModels: [],
 	boardStatuses: ['todo', 'in_progress', 'in_review', 'done']
-});
+};
+
+export const settings = $state<Settings>({ ...DEFAULT_SETTINGS, workspaceName: 'Workmaster' });
 
 function requireDb(): Database {
 	if (!db) throw new Error('Store not initialised');
@@ -245,6 +275,8 @@ export function initStore(): Promise<void> {
 async function load(): Promise<void> {
 	try {
 		db = await Database.load('sqlite:workmaster.db');
+		await refreshWorkspaces();
+		await refreshCurrentWorkspace();
 		await refreshAll();
 		await runAutomations();
 	} catch (err) {
@@ -254,13 +286,49 @@ async function load(): Promise<void> {
 	status.ready = true;
 }
 
+async function refreshWorkspaces(): Promise<void> {
+	const database = requireDb();
+	const rows = await database.select<WorkspaceRow[]>(
+		'SELECT id, name, icon_color, icon_emoji, icon FROM workspaces ORDER BY rowid'
+	);
+	workspaces.splice(
+		0,
+		workspaces.length,
+		...rows.map((r) => ({
+			id: r.id,
+			name: r.name,
+			icon: r.icon || ''
+		}))
+	);
+}
+
+async function refreshCurrentWorkspace(): Promise<void> {
+	const database = requireDb();
+	const rows = await database.select<SettingsRow[]>(
+		"SELECT value FROM settings WHERE key = 'current_workspace'"
+	);
+	try {
+		const stored = JSON.parse(rows[0]?.value ?? '"default"') as string;
+		if (workspaces.some((w) => w.id === stored)) currentWorkspaceState.id = stored;
+	} catch {
+		currentWorkspaceState.id = workspaces[0]?.id ?? 'default';
+	}
+}
+
 async function refreshAll(): Promise<void> {
 	const database = requireDb();
+	const ws = currentWorkspaceState.id;
 
-	const memberRows = await database.select<MemberRow[]>('SELECT * FROM members ORDER BY rowid');
+	const memberRows = await database.select<MemberRow[]>(
+		'SELECT * FROM members WHERE workspace_id = ? ORDER BY rowid',
+		[ws]
+	);
 	members.splice(0, members.length, ...memberRows.map(memberFromRow));
 
-	const projectRows = await database.select<ProjectRow[]>('SELECT * FROM projects ORDER BY rowid');
+	const projectRows = await database.select<ProjectRow[]>(
+		'SELECT * FROM projects WHERE workspace_id = ? ORDER BY rowid',
+		[ws]
+	);
 	const linkRows = await database.select<ProjectMemberRow[]>(
 		'SELECT project_id, member_id FROM project_members'
 	);
@@ -276,14 +344,22 @@ async function refreshAll(): Promise<void> {
 		...projectRows.map((row) => projectFromRow(row, memberIdsByProject.get(row.id) ?? []))
 	);
 
-	const taskRows = await database.select<TaskRow[]>('SELECT * FROM tasks ORDER BY rowid');
+	const taskRows = await database.select<TaskRow[]>(
+		'SELECT t.* FROM tasks t JOIN projects p ON p.id = t.project_id WHERE p.workspace_id = ? ORDER BY t.rowid',
+		[ws]
+	);
 	tasks.splice(0, tasks.length, ...taskRows.map(taskFromRow));
 
-	const auditRows = await database.select<AuditRow[]>('SELECT * FROM audit_log ORDER BY rowid DESC');
+	const auditRows = await database.select<AuditRow[]>(
+		'SELECT * FROM audit_log WHERE workspace_id = ? ORDER BY rowid DESC',
+		[ws]
+	);
 	auditLog.splice(0, auditLog.length, ...auditRows.map(auditFromRow));
 
-	const settingRows = await database.select<SettingsRow[]>('SELECT key, value FROM settings');
-	for (const row of settingRows) {
+	// Settings = defaults, overlaid with global rows, then this workspace's rows.
+	Object.assign(settings, structuredClone(DEFAULT_SETTINGS));
+	const globalRows = await database.select<SettingsRow[]>('SELECT key, value FROM settings');
+	for (const row of globalRows) {
 		try {
 			const parsed = JSON.parse(row.value);
 			if (row.key in settings) {
@@ -293,6 +369,23 @@ async function refreshAll(): Promise<void> {
 			// ignore malformed settings values
 		}
 	}
+	const wsRows = await database.select<SettingsRow[]>(
+		'SELECT key, value FROM workspace_settings WHERE workspace_id = ?',
+		[ws]
+	);
+	for (const row of wsRows) {
+		try {
+			const parsed = JSON.parse(row.value);
+			if (row.key in settings) {
+				(settings as unknown as Record<string, unknown>)[row.key] = parsed;
+			}
+		} catch {
+			// ignore malformed settings values
+		}
+	}
+	// The workspace name mirrors workspaces.name so the switcher and settings agree.
+	const current = workspaces.find((w) => w.id === ws);
+	if (current && current.name) settings.workspaceName = current.name;
 }
 
 export function memberById(id: string | null): Member | undefined {
@@ -336,8 +429,17 @@ async function logAudit(
 		time: nowIso()
 	};
 	await database.execute(
-		'INSERT INTO audit_log (id, entity_type, entity_id, action, summary, details, time) VALUES (?, ?, ?, ?, ?, ?, ?)',
-		[entry.id, entityType, entityId, action, summary, JSON.stringify(details), entry.time]
+		'INSERT INTO audit_log (id, entity_type, entity_id, action, summary, details, time, workspace_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+		[
+			entry.id,
+			entityType,
+			entityId,
+			action,
+			summary,
+			JSON.stringify(details),
+			entry.time,
+			currentWorkspaceState.id
+		]
 	);
 	auditLog.unshift(entry);
 }
@@ -352,17 +454,113 @@ export function applyTheme(): void {
 
 export async function updateSetting<K extends keyof Settings>(key: K, value: Settings[K]): Promise<void> {
 	const database = requireDb();
-	await database.execute(
-		'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
-		[key, JSON.stringify(value)]
-	);
+	if (WORKSPACE_SETTING_KEYS.has(key)) {
+		await database.execute(
+			'INSERT INTO workspace_settings (workspace_id, key, value) VALUES (?, ?, ?) ON CONFLICT(workspace_id, key) DO UPDATE SET value = excluded.value',
+			[currentWorkspaceState.id, key, JSON.stringify(value)]
+		);
+	} else {
+		await database.execute(
+			'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+			[key, JSON.stringify(value)]
+		);
+	}
 	const previous = settings[key];
 	settings[key] = value;
+	if (key === 'workspaceName') {
+		// Keep the workspaces table in sync so the switcher and Settings agree.
+		await database.execute('UPDATE workspaces SET name = ? WHERE id = ?', [
+			String(value),
+			currentWorkspaceState.id
+		]);
+		const ws = workspaces.find((w) => w.id === currentWorkspaceState.id);
+		if (ws) ws.name = String(value);
+	}
 	if (key === 'workspaceName' || key === 'timezone' || key === 'theme') {
 		await logAudit('settings', key, 'updated', `Changed setting "${key}" to ${String(value)}`, {
 			[key]: { from: previous, to: value }
 		});
 	}
+}
+
+export async function createWorkspace(name: string, icon?: { icon?: string }): Promise<void> {
+	const database = requireDb();
+	assertWorkspaceName(name);
+	const trimmed = name.trim();
+	if (workspaces.some((w) => w.name.toLowerCase() === trimmed.toLowerCase())) {
+		throw new Error('A workspace with this name already exists.');
+	}
+	const workspace: Workspace = {
+		id: newId(),
+		name: trimmed,
+		icon: icon?.icon?.trim() ?? ''
+	};
+	await database.execute(
+		'INSERT INTO workspaces (id, name, created_at, icon) VALUES (?, ?, ?, ?)',
+		[workspace.id, trimmed, nowIso(), workspace.icon]
+	);
+	workspaces.push(workspace);
+	await logAudit('workspace', workspace.id, 'created', `Created workspace "${trimmed}"`, {});
+	await switchWorkspace(workspace.id);
+}
+
+export async function updateWorkspace(id: string, name: string, icon?: { icon?: string }): Promise<void> {
+	const database = requireDb();
+	assertWorkspaceName(name);
+	const trimmed = name.trim();
+	if (workspaces.some((w) => w.id !== id && w.name.toLowerCase() === trimmed.toLowerCase())) {
+		throw new Error('A workspace with this name already exists.');
+	}
+	const workspace = workspaces.find((w) => w.id === id);
+	if (!workspace) return;
+	const oldName = workspace.name;
+	const nextIcon = icon?.icon !== undefined ? icon.icon.trim() : workspace.icon;
+	await database.execute('UPDATE workspaces SET name = ?, icon = ? WHERE id = ?', [
+		trimmed,
+		nextIcon,
+		id
+	]);
+	workspace.name = trimmed;
+	workspace.icon = nextIcon;
+	if (id === currentWorkspaceState.id) {
+		await updateSetting('workspaceName', trimmed);
+	}
+	await logAudit('workspace', id, 'updated', `Renamed workspace to "${trimmed}"`, {
+		name: { from: oldName, to: trimmed }
+	});
+}
+
+export async function deleteWorkspace(id: string): Promise<void> {
+	const database = requireDb();
+	if (workspaces.length <= 1) {
+		throw new Error('Cannot delete the last workspace.');
+	}
+	const workspace = workspaces.find((w) => w.id === id);
+	if (!workspace) return;
+	await database.execute('DELETE FROM projects WHERE workspace_id = ?', [id]); // tasks cascade
+	await database.execute('DELETE FROM members WHERE workspace_id = ?', [id]);
+	await database.execute('DELETE FROM workspace_settings WHERE workspace_id = ?', [id]);
+	await database.execute('DELETE FROM workspaces WHERE id = ?', [id]);
+	workspaces.splice(workspaces.indexOf(workspace), 1);
+	if (currentWorkspaceState.id === id) {
+		await switchWorkspace(workspaces[0].id);
+	}
+	await logAudit('workspace', id, 'deleted', `Deleted workspace "${workspace.name}"`, {});
+}
+
+export async function switchWorkspace(id: string): Promise<void> {
+	if (!workspaces.some((w) => w.id === id) || currentWorkspaceState.id === id) return;
+	currentWorkspaceState.id = id;
+	const database = requireDb();
+	await database.execute(
+		'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+		['current_workspace', JSON.stringify(id)]
+	);
+	await refreshAll();
+}
+
+function assertWorkspaceName(name: string): void {
+	if (!name.trim()) throw new Error('Workspace name is required.');
 }
 
 export async function addMember(input: { name: string; email: string; role: string }): Promise<void> {
@@ -382,8 +580,8 @@ export async function addMember(input: { name: string; email: string; role: stri
 		online: true
 	};
 	await database.execute(
-		'INSERT INTO members (id, name, email, role, color, online) VALUES (?, ?, ?, ?, ?, 1)',
-		[member.id, member.name, member.email, member.role, member.color]
+		'INSERT INTO members (id, name, email, role, color, online, workspace_id) VALUES (?, ?, ?, ?, ?, 1, ?)',
+		[member.id, member.name, member.email, member.role, member.color, currentWorkspaceState.id]
 	);
 	members.push(member);
 	await logAudit('member', member.id, 'created', `Added member "${member.name}"`, {
@@ -474,8 +672,17 @@ export async function createProject(input: {
 		workDays: [1, 2, 3, 4, 5]
 	};
 	await database.execute(
-		'INSERT INTO projects (id, slug, name, description, status, progress, due, color) VALUES (?, ?, ?, ?, ?, 0, ?, ?)',
-		[project.id, project.slug, project.name, project.description, project.status, project.due, project.color]
+		'INSERT INTO projects (id, slug, name, description, status, progress, due, color, workspace_id) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)',
+		[
+			project.id,
+			project.slug,
+			project.name,
+			project.description,
+			project.status,
+			project.due,
+			project.color,
+			currentWorkspaceState.id
+		]
 	);
 	projects.unshift(project);
 	await logAudit('project', project.id, 'created', `Created project "${project.name}"`, {

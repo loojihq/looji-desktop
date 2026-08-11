@@ -7,6 +7,12 @@ export type Member = {
 	online: boolean;
 };
 
+export type Workspace = {
+	id: string;
+	name: string;
+	icon: string;
+};
+
 export type ProjectStatus = 'planning' | 'active' | 'on_hold' | 'completed';
 
 export type Project = {
