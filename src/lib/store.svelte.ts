@@ -35,6 +35,7 @@ type ProjectRow = {
 	color: string;
 	spec: string;
 	user_stories: string;
+	repo_path: string;
 	work_start: number;
 	work_end: number;
 	work_days: string;
@@ -186,6 +187,7 @@ function memberFromRow(row: MemberRow): Member {
 		memberIds,
 		spec: row.spec ?? '',
 		userStories,
+		repoPath: row.repo_path ?? '',
 		workStart: row.work_start ?? 540,
 		workEnd: row.work_end ?? 1020,
 		workDays
@@ -465,6 +467,7 @@ export async function createProject(input: {
 		memberIds: [],
 		spec: '',
 		userStories: [],
+		repoPath: '',
 		workStart: 540,
 		workEnd: 1020,
 		workDays: [1, 2, 3, 4, 5]
@@ -490,6 +493,7 @@ export async function updateProject(
 		workStart?: number;
 		workEnd?: number;
 		workDays?: number[];
+		repoPath?: string;
 	}
 ): Promise<void> {
 	const project = projects.find((p) => p.id === id);
@@ -527,9 +531,23 @@ export async function updateProject(
 	if (JSON.stringify(project.workDays) !== JSON.stringify(workDays)) {
 		changes.workDays = { from: [...project.workDays], to: [...workDays] };
 	}
+	const repoPath = (input.repoPath ?? project.repoPath).trim();
+	if (project.repoPath !== repoPath) {
+		changes.repoPath = { from: project.repoPath, to: repoPath };
+	}
 	await database.execute(
-		'UPDATE projects SET name = ?, description = ?, status = ?, due = ?, work_start = ?, work_end = ?, work_days = ? WHERE id = ?',
-		[name, input.description.trim(), input.status, input.due, workStart, workEnd, JSON.stringify(workDays), id]
+		'UPDATE projects SET name = ?, description = ?, status = ?, due = ?, work_start = ?, work_end = ?, work_days = ?, repo_path = ? WHERE id = ?',
+		[
+			name,
+			input.description.trim(),
+			input.status,
+			input.due,
+			workStart,
+			workEnd,
+			JSON.stringify(workDays),
+			repoPath,
+			id
+		]
 	);
 	project.name = name;
 	project.description = input.description.trim();
@@ -538,6 +556,7 @@ export async function updateProject(
 	project.workStart = workStart;
 	project.workEnd = workEnd;
 	project.workDays = workDays;
+	project.repoPath = repoPath;
 	if (Object.keys(changes).length > 0) {
 		await logAudit('project', id, 'updated', `Updated project "${project.name}"`, changes);
 	}

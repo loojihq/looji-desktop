@@ -194,6 +194,12 @@ pub fn run() {
             sql: r#"UPDATE settings SET value = '["todo","in_progress","in_review","done"]' WHERE key = 'boardStatuses' AND value = '["todo","in_progress","done"]'"#,
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 23,
+            description: "add_projects_repo_path",
+            sql: "ALTER TABLE projects ADD COLUMN repo_path TEXT NOT NULL DEFAULT ''",
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()

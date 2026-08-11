@@ -2,15 +2,17 @@
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { ArrowLeft, CalendarDays, Columns, FileDown, Gauge, LayoutGrid, List, Map, Pencil, Plus, RefreshCw, Search, Sparkles, Trash2, User, X } from '@lucide/svelte';
+	import { open } from '@tauri-apps/plugin-dialog';
+	import { ArrowLeft, CalendarDays, Columns, FileDown, FolderGit2, Gauge, GitBranch, LayoutGrid, List, Map, Pencil, Plus, RefreshCw, Search, Sparkles, Trash2, User, X } from '@lucide/svelte';
 	import Avatar from '$lib/components/Avatar.svelte';
 	import Badge from '$lib/components/Badge.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import Markdown from '$lib/components/Markdown.svelte';
 	import ProgressBar from '$lib/components/ProgressBar.svelte';
 	import Select from '$lib/components/Select.svelte';
-	import { explainTask, generateAiDraft, suggestSpecialties, taskChatFollowUp, type TaskChatMessage, type TaskContext } from '$lib/ai';
+	import { checkTaskAgainstRepo, explainTask, generateAiDraft, suggestSpecialties, taskChatFollowUp, type RepoContext, type TaskChatMessage, type TaskContext } from '$lib/ai';
 	import { exportDraftPdf, exportProjectPdf } from '$lib/pdf';
+	import { isKeyFile, pickRelevantFiles, readRepoFiles, repoTreeText, scanRepo, type RepoScan } from '$lib/repo';
 	import { projectAccents, priorityStyles, projectStatusStyles, taskStatusStyles } from '$lib/badges';
 	import {
 		clearAiDraft,
@@ -385,6 +387,9 @@
 	let projWorkStart = $state('09:00');
 	let projWorkEnd = $state('17:00');
 	let projWorkDays = $state<number[]>([1, 2, 3, 4, 5]);
+	let projRepoPath = $state('');
+	let projRepoTrying = $state(false);
+	let projRepoScan = $state<{ ok: boolean; message: string } | null>(null);
 	let projError = $state('');
 
 	const workDayOptions = [
@@ -435,6 +440,49 @@
 	// (settings.aiModel is only for project planning / spec generation).
 	let explainModel = $state(settings.aiModel);
 
+	// Connected local repository: scan state plus the per-task repo context
+	// that is injected into the AI prompts.
+	let repoScan = $state<RepoScan | null>(null);
+	let repoScanning = $state(false);
+	let repoScanError = $state('');
+	let explainRepo = $state<RepoContext | null>(null);
+	let explainRepoTaskId = $state<string | null>(null);
+
+	async function scanProjectRepo() {
+		if (!project?.repoPath || repoScanning) return;
+		repoScanning = true;
+		repoScanError = '';
+		try {
+			repoScan = await scanRepo(project.repoPath);
+			if (repoScan.error) repoScanError = repoScan.error;
+		} catch (err) {
+			repoScanError = err instanceof Error ? err.message : String(err);
+		} finally {
+			repoScanning = false;
+		}
+	}
+
+	/** Builds the repo context for a task: file tree + key files + files most
+	 *  likely related to the task. Cached per task while the modal is open. */
+	async function ensureRepoContext(task: Task): Promise<RepoContext | null> {
+		if (!project?.repoPath) return null;
+		if (explainRepo && explainRepoTaskId === task.id) return explainRepo;
+		if (!repoScan && !repoScanning) await scanProjectRepo();
+		if (!repoScan || repoScan.error) return null;
+		const keywords = [task.title, task.description, ...task.tags].filter((k) => k.trim());
+		const relevant = pickRelevantFiles(repoScan.files, keywords, 6);
+		const keys = repoScan.files.filter((f) => isKeyFile(f.path)).slice(0, 4);
+		const contents = await readRepoFiles([...keys, ...relevant], 120_000);
+		const ctx: RepoContext = {
+			root: repoScan.root,
+			tree: repoTreeText(repoScan.files),
+			contents
+		};
+		explainRepo = ctx;
+		explainRepoTaskId = task.id;
+		return ctx;
+	}
+
 	// Tasks in this project that already have a saved explanation → the card
 	// button reads "Open explanation" instead of "Explain task".
 	let explainedTaskIds = $state<Set<string>>(new Set());
@@ -467,7 +515,7 @@
 		});
 	});
 
-	function explainContext(task: Task): TaskContext {
+	function explainContext(task: Task, repo?: RepoContext | null): TaskContext {
 		const assignee = memberById(task.assigneeId);
 		return {
 			projectName: project?.name ?? '',
@@ -487,7 +535,8 @@
 					title: t.title,
 					status: taskStatusStyles[t.status].label,
 					assignee: memberById(t.assigneeId)?.name ?? ''
-				}))
+				})),
+			repo: repo ?? undefined
 		};
 	}
 
@@ -507,8 +556,9 @@
 		const abort = new AbortController();
 		explainAbort = abort;
 		try {
+			const repo = await ensureRepoContext(task);
 			const text = await explainTask({
-				...explainContext(task),
+				...explainContext(task, repo),
 				apiKey: settings.aiApiKey,
 				model: explainModel,
 				onDelta: (delta) => (explainPending += delta),
@@ -536,6 +586,11 @@
 		if (!project || !settings.aiApiKey || explainBusy) return;
 		explainTarget = task;
 		explainError = '';
+		// Start scanning the connected repository in the background so the chat
+		// and repo checks have context ready.
+		if (project.repoPath && !repoScan && !repoScanning) {
+			void scanProjectRepo();
+		}
 		// Resume a saved conversation when one exists; otherwise start fresh.
 		const saved = await loadTaskExplanation(task.id);
 		if (saved && saved.length > 0) {
@@ -547,6 +602,8 @@
 
 	/** Starts a blank chat: discards the saved conversation and shows
 	 *  suggestion prompts. Nothing is generated until the user asks. */
+	/** Starts a blank chat: discards the saved conversation and shows
+	 *  suggestion prompts. Nothing is generated until the user asks. */
 	async function newExplanation() {
 		if (!explainTarget || explainBusy) return;
 		await clearTaskExplanation(explainTarget.id);
@@ -556,6 +613,51 @@
 		explainMessages = [];
 		explainPending = '';
 		explainError = '';
+	}
+
+	/** Checks the task against the connected repository: is it implemented, what
+	 *  is missing, and review notes. Result streams in as an assistant reply. */
+	async function checkTaskInRepo() {
+		if (!explainTarget || explainBusy || !project?.repoPath) return;
+		const task = explainTarget;
+		const repo = await ensureRepoContext(task);
+		if (!repo) {
+			explainError =
+				repoScanError || 'Could not read the repository — check the path in project settings.';
+			return;
+		}
+		explainMessages = [
+			...explainMessages,
+			{ role: 'user', content: 'Check this task against the repository — is it implemented?' }
+		];
+		explainPending = '';
+		explainError = '';
+		explainBusy = true;
+		const abort = new AbortController();
+		explainAbort = abort;
+		try {
+			const text = await checkTaskAgainstRepo({
+				context: { ...explainContext(task, repo), repo },
+				apiKey: settings.aiApiKey,
+				model: explainModel,
+				onDelta: (delta) => (explainPending += delta),
+				signal: abort.signal
+			});
+			explainMessages = [...explainMessages, { role: 'assistant', content: text }];
+			explainPending = '';
+			await saveTaskExplanation(task.id, explainMessages);
+			markExplained(task.id);
+		} catch (err) {
+			if (abort.signal.aborted) {
+				explainPending = '';
+				return;
+			}
+			explainError = err instanceof Error ? err.message : String(err);
+			explainPending = '';
+		} finally {
+			explainBusy = false;
+			explainAbort = null;
+		}
 	}
 
 	/** Contextual prompts shown while the chat is empty, so the user has a
@@ -629,8 +731,9 @@
 		const abort = new AbortController();
 		explainAbort = abort;
 		try {
+			const repo = await ensureRepoContext(task);
 			const text = await taskChatFollowUp({
-				context: explainContext(task),
+				context: explainContext(task, repo),
 				history: explainMessages.slice(0, start),
 				question,
 				apiKey: settings.aiApiKey,
@@ -971,6 +1074,8 @@
 		projWorkStart = minutesToTime(project.workStart);
 		projWorkEnd = minutesToTime(project.workEnd);
 		projWorkDays = [...project.workDays];
+		projRepoPath = project.repoPath;
+		projRepoScan = null;
 		projError = '';
 		projectEditOpen = true;
 	}
@@ -978,6 +1083,46 @@
 	function cancelProjectEdit() {
 		projectEditOpen = false;
 		projError = '';
+	}
+
+	/** Opens the native folder picker and fills the repository path. */
+	async function browseRepoPath() {
+		const selected = await open({
+			directory: true,
+			title: 'Select the project repository folder',
+			multiple: false
+		});
+		if (typeof selected === 'string' && selected.trim()) {
+			projRepoPath = selected;
+			projRepoScan = null;
+			await testRepoPath();
+		}
+	}
+
+	/** Validates the repository path in the project form by scanning it. */
+	async function testRepoPath() {
+		const path = projRepoPath.trim();
+		if (!path) {
+			projRepoScan = { ok: false, message: 'Enter a repository path first.' };
+			return;
+		}
+		projRepoTrying = true;
+		projRepoScan = null;
+		try {
+			const scan = await scanRepo(path);
+			projRepoScan = {
+				ok: !scan.error && scan.files.length > 0,
+				message: scan.error
+					? scan.error
+					: scan.files.length === 0
+						? 'Found no source files (path may be wrong or the folder is empty).'
+						: `${scan.files.length} source file${scan.files.length === 1 ? '' : 's'} found${scan.truncated ? ' (truncated)' : ''}.`
+			};
+		} catch (err) {
+			projRepoScan = { ok: false, message: err instanceof Error ? err.message : String(err) };
+		} finally {
+			projRepoTrying = false;
+		}
 	}
 
 	async function handleProjectSave() {
@@ -1001,8 +1146,12 @@
 				due: projDue ? new Date(`${projDue}T12:00:00`).toISOString() : daysFromNow(30),
 				workStart,
 				workEnd,
-				workDays: projWorkDays
+				workDays: projWorkDays,
+				repoPath: projRepoPath.trim()
 			});
+			repoScan = null;
+			explainRepo = null;
+			explainRepoTaskId = null;
 			cancelProjectEdit();
 		} catch (err) {
 			console.error('Failed to save project', err);
@@ -1425,6 +1574,50 @@
 							In progress.
 						</span>
 					</div>
+				</div>
+				<div class="lg:col-span-4">
+					<label for="proj-repo" class="mb-1 block text-xs font-medium text-neutral-600">
+						Repository path
+					</label>
+					<div class="flex items-center gap-2">
+						<input
+							id="proj-repo"
+							type="text"
+							placeholder="C:\repo or \\wsl$\Ubuntu\home\you\repo"
+							class="w-full rounded-lg border-neutral-300 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:ring-indigo-500"
+							bind:value={projRepoPath}
+						/>
+						<button
+							type="button"
+							class="shrink-0 rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm font-medium text-neutral-600 transition-colors hover:bg-neutral-50"
+							onclick={browseRepoPath}
+							title="Pick the repository folder"
+						>
+							Browse…
+						</button>
+						<button
+							type="button"
+							class="shrink-0 rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm font-medium text-neutral-600 transition-colors hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
+							onclick={testRepoPath}
+							disabled={projRepoTrying || !projRepoPath.trim()}
+						>
+							{projRepoTrying ? 'Scanning…' : 'Scan'}
+						</button>
+					</div>
+					{#if projRepoScan}
+						<p
+							class="mt-1.5 text-xs {projRepoScan.ok
+								? 'text-emerald-600'
+								: 'text-red-600'}"
+						>
+							{projRepoScan.message}
+						</p>
+					{/if}
+					<p class="mt-1 text-xs text-neutral-400">
+						Connect the local (or WSL) repository for this project so the AI can answer
+						questions about the actual code, check if tasks are implemented, and help with
+						reviews.
+					</p>
 				</div>
 			</div>
 			{#if projError}
@@ -2554,6 +2747,18 @@
 					</p>
 				</div>
 				<div class="flex shrink-0 items-center gap-1">
+					{#if project?.repoPath}
+						<button
+							type="button"
+							class="inline-flex items-center gap-1 rounded-lg border border-neutral-200 px-2 py-1.5 text-xs font-medium text-neutral-600 transition-colors hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
+							onclick={checkTaskInRepo}
+							disabled={explainBusy || (!repoScan && !repoScanning)}
+							title="Check the task against the connected repository (implementation & review)"
+						>
+							<GitBranch size={13} />
+							Check repo
+						</button>
+					{/if}
 					<button
 						type="button"
 						class="inline-flex items-center gap-1 rounded-lg border border-neutral-200 px-2 py-1.5 text-xs font-medium text-neutral-600 transition-colors hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
@@ -2574,6 +2779,46 @@
 					</button>
 				</div>
 			</header>
+
+			{#if project?.repoPath}
+				<div
+					class="flex items-center gap-2 border-b border-neutral-100 bg-neutral-50/60 px-5 py-2"
+				>
+					<FolderGit2 size={13} class="shrink-0 text-neutral-400" />
+					<span class="min-w-0 truncate text-xs text-neutral-500" title={project.repoPath}>
+						{project.repoPath}
+					</span>
+					{#if repoScan && !repoScan.error}
+						<span
+							class="shrink-0 rounded-md bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700"
+						>
+							{repoScan.files.length} file{repoScan.files.length === 1 ? '' : 's'}
+							{repoScan.truncated ? '+' : ''}
+						</span>
+					{:else if repoScanning}
+						<span class="shrink-0 text-[10px] text-neutral-400">Scanning…</span>
+					{:else if repoScanError}
+						<span class="shrink-0 text-[10px] font-medium text-red-600">Unreadable</span>
+					{:else}
+						<span class="shrink-0 text-[10px] text-neutral-400">Not scanned</span>
+					{/if}
+					<button
+						type="button"
+						class="ml-auto shrink-0 rounded-md p-1 text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-600 disabled:cursor-not-allowed disabled:opacity-50"
+						onclick={() => {
+							repoScan = null;
+							explainRepo = null;
+							explainRepoTaskId = null;
+							void scanProjectRepo();
+						}}
+						disabled={repoScanning}
+						aria-label="Rescan repository"
+						title="Rescan repository"
+					>
+						<RefreshCw size={12} />
+					</button>
+				</div>
+			{/if}
 
 			<div class="flex-1 space-y-3 overflow-y-auto px-5 py-4" bind:this={conversationEl}>
 				{#if explainMessages.length === 0 && !explainBusy}

@@ -21,6 +21,7 @@ export type Project = {
 	memberIds: string[];
 	spec: string;
 	userStories: string[];
+	repoPath: string;
 	workStart: number;
 	workEnd: number;
 	workDays: number[];

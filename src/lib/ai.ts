@@ -341,6 +341,12 @@ export async function testDeepSeekConnection(apiKey: string, model: string): Pro
 }
 
 /** Context describing a task and the project it lives in. */
+export type RepoContext = {
+	root: string;
+	tree: string;
+	contents: { path: string; content: string }[];
+};
+
 export type TaskContext = {
 	projectName: string;
 	projectDescription: string;
@@ -354,6 +360,7 @@ export type TaskContext = {
 		assigneeRole: string;
 	};
 	otherTasks: { title: string; status: string; assignee: string }[];
+	repo?: RepoContext;
 };
 
 /** A single exchange in a task conversation (user question / assistant answer). */
@@ -385,6 +392,15 @@ function buildTaskContext(context: TaskContext): string {
 					.map((t) => `- ${t.title} — ${t.status}${t.assignee ? ` — ${t.assignee}` : ''}`)
 					.join('\n')
 			: '- none';
+	let repoBlock = '';
+	if (context.repo) {
+		repoBlock = `\n\nLocal repository at: ${context.repo.root}\nFile tree:\n${context.repo.tree}`;
+		if (context.repo.contents.length > 0) {
+			repoBlock += `\n\nRelevant file contents (paths are absolute on the machine):\n${context.repo.contents
+				.map((f) => `### ${f.path}\n${f.content}`)
+				.join('\n\n')}`;
+		}
+	}
 	return `Project: ${context.projectName}
 Project description: ${context.projectDescription || '(none)'}
 
@@ -392,7 +408,7 @@ The task to explain:
 ${taskLines}
 
 Other tasks in this project (title — status — assignee):
-${others}`;
+${others}${repoBlock}`;
 }
 
 /**
@@ -532,6 +548,42 @@ export async function taskChatFollowUp(input: {
 		input.apiKey,
 		input.model,
 		messages,
+		input.onDelta ?? (() => {}),
+		input.signal
+	);
+	return content.trim();
+}
+
+const REPO_CHECK_SYSTEM_PROMPT =
+	'You are a senior software engineer performing an implementation review against a local repository. You are given a task and the repository\'s file tree plus the contents of files most likely related to the task. Inspect the evidence carefully and report what is actually implemented in the code — do not assume anything is done just because the task says so. Reply in markdown with short sections.';
+
+/**
+ * Checks a task against the connected local repository: whether it looks
+ * implemented, where, what is missing, and review notes for the reviewer.
+ */
+export async function checkTaskAgainstRepo(input: {
+	context: TaskContext & { repo: RepoContext };
+	apiKey: string;
+	model: string;
+	onDelta?: (delta: string) => void;
+	signal?: AbortSignal;
+}): Promise<string> {
+	const content = await streamChat(
+		input.apiKey,
+		input.model,
+		[
+			{ role: 'system', content: REPO_CHECK_SYSTEM_PROMPT },
+			{
+				role: 'user',
+				content: `${buildTaskContext(input.context)}
+
+Review this task against the local code and report:
+1. Implementation status — is it implemented, partially implemented, or not started? Be specific and honest.
+2. Evidence — which files/functions/lines actually implement it (cite file paths).
+3. What is missing or incomplete, if anything.
+4. Review notes — risks, edge cases, test coverage, and a short recommendation for the reviewer (approve, needs work, or needs discussion).`
+			}
+		],
 		input.onDelta ?? (() => {}),
 		input.signal
 	);
