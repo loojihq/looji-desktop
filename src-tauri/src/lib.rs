@@ -166,6 +166,18 @@ pub fn run() {
             sql: "ALTER TABLE projects ADD COLUMN work_end INTEGER NOT NULL DEFAULT 1020",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 19,
+            description: "add_projects_work_days",
+            sql: "ALTER TABLE projects ADD COLUMN work_days TEXT NOT NULL DEFAULT '[1,2,3,4,5]'",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 20,
+            description: "add_tasks_original_due",
+            sql: "ALTER TABLE tasks ADD COLUMN original_due TEXT NOT NULL DEFAULT ''",
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()

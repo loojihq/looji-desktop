@@ -2,7 +2,7 @@
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { ArrowLeft, CalendarDays, Columns, FileDown, Gauge, LayoutGrid, List, Map, Pencil, Plus, RefreshCw, Sparkles, Trash2, User, X } from '@lucide/svelte';
+	import { ArrowLeft, CalendarDays, Columns, FileDown, Gauge, LayoutGrid, List, Map, Pencil, Plus, RefreshCw, Search, Sparkles, Trash2, User, X } from '@lucide/svelte';
 	import Avatar from '$lib/components/Avatar.svelte';
 	import Badge from '$lib/components/Badge.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
@@ -95,7 +95,8 @@
 					? ['in_progress', 'in_review']
 					: [status];
 		const rows = tasks.filter(
-			(task) => task.projectId === project.id && included.includes(task.status)
+			(task) =>
+				task.projectId === project.id && included.includes(task.status) && matchesQuery(task)
 		);
 		return status === 'todo' || status === 'in_progress'
 			? rows.sort(compareLogicalOrder)
@@ -110,6 +111,17 @@
 
 	let draggingId = $state<string | null>(null);
 	let overStatus = $state<TaskStatus | null>(null);
+	let boardQuery = $state('');
+
+	function matchesQuery(task: Task): boolean {
+		const q = boardQuery.trim().toLowerCase();
+		if (!q) return true;
+		return (
+			task.title.toLowerCase().includes(q) ||
+			task.description.toLowerCase().includes(q) ||
+			task.tags.some((t) => t.toLowerCase().includes(q))
+		);
+	}
 
 	type DragState = {
 		taskId: string;
@@ -307,7 +319,24 @@
 	let projDue = $state('');
 	let projWorkStart = $state('09:00');
 	let projWorkEnd = $state('17:00');
+	let projWorkDays = $state<number[]>([1, 2, 3, 4, 5]);
 	let projError = $state('');
+
+	const workDayOptions = [
+		{ value: 0, label: 'S' },
+		{ value: 1, label: 'M' },
+		{ value: 2, label: 'T' },
+		{ value: 3, label: 'W' },
+		{ value: 4, label: 'T' },
+		{ value: 5, label: 'F' },
+		{ value: 6, label: 'S' }
+	];
+
+	function toggleWorkDay(day: number) {
+		projWorkDays = projWorkDays.includes(day)
+			? projWorkDays.filter((d) => d !== day)
+			: [...projWorkDays, day].sort();
+	}
 
 	let editTask = $state<Task | null>(null);
 	let editTitle = $state('');
@@ -608,6 +637,7 @@
 		projDue = project.due.slice(0, 10);
 		projWorkStart = minutesToTime(project.workStart);
 		projWorkEnd = minutesToTime(project.workEnd);
+		projWorkDays = [...project.workDays];
 		projError = '';
 		projectEditOpen = true;
 	}
@@ -627,13 +657,18 @@
 				projError = 'Working hours end must be after the start time.';
 				return;
 			}
+			if (projWorkDays.length === 0) {
+				projError = 'Select at least one working day.';
+				return;
+			}
 			await updateProject(project.id, {
 				name: projName.trim(),
 				description: projDescription.trim(),
 				status: projStatus,
 				due: projDue ? new Date(`${projDue}T12:00:00`).toISOString() : daysFromNow(30),
 				workStart,
-				workEnd
+				workEnd,
+				workDays: projWorkDays
 			});
 			cancelProjectEdit();
 		} catch (err) {
@@ -1038,9 +1073,23 @@
 							class="rounded-lg border-neutral-300 bg-white px-3 py-1.5 text-sm focus:border-indigo-500 focus:ring-indigo-500"
 							bind:value={projWorkEnd}
 						/>
-						<span class="text-xs text-neutral-400">
-							— when a task moves into In progress, its due time is now + estimate, counted
-							across these hours (weekdays only).
+					</div>
+					<div class="mt-2 flex flex-wrap items-center gap-1.5">
+						{#each workDayOptions as day (day.value)}
+							<button
+								type="button"
+								onclick={() => toggleWorkDay(day.value)}
+								class="flex h-8 w-8 items-center justify-center rounded-lg text-sm font-medium transition-colors {projWorkDays.includes(day.value)
+									? 'bg-indigo-600 text-white'
+									: 'border border-neutral-200 bg-white text-neutral-500 hover:bg-neutral-50'}"
+								title={['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][day.value]}
+							>
+								{day.label}
+							</button>
+						{/each}
+						<span class="ml-1 text-xs text-neutral-400">
+							Workdays · estimates count only these hours on these days when a task moves into
+							In progress.
 						</span>
 					</div>
 				</div>
@@ -1562,7 +1611,30 @@
 				</button>
 			</div>
 		{/if}
-			<div class="flex gap-4 overflow-x-auto pb-4">
+		<div class="mb-3 flex items-center gap-2">
+			<div class="relative w-full sm:max-w-xs">
+				<span
+					class="pointer-events-none absolute inset-y-0 left-3 flex items-center text-neutral-400"
+				>
+					<Search size={15} />
+				</span>
+				<input
+					type="search"
+					placeholder="Search tasks"
+					class="w-full rounded-lg border-neutral-300 bg-surface py-2 pr-3 pl-9 text-sm focus:border-indigo-500 focus:ring-indigo-500"
+					bind:value={boardQuery}
+				/>
+			</div>
+			{#if boardQuery.trim()}
+				<p class="text-xs text-neutral-400">
+					{projectTasks.filter(matchesQuery).length} match{projectTasks.filter(matchesQuery)
+						.length === 1
+						? ''
+						: 'es'}
+				</p>
+			{/if}
+		</div>
+		<div class="flex gap-4 overflow-x-auto pb-4">
 			{#each boardColumns as status (status)}
 				<div
 					role="group"

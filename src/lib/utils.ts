@@ -105,7 +105,8 @@ export function addWorkingHours(
 	start: Date,
 	hours: number,
 	workStartMin = 540,
-	workEndMin = 1020
+	workEndMin = 1020,
+	workDays: number[] = [1, 2, 3, 4, 5]
 ): Date {
 	if (hours <= 0 || workEndMin <= workStartMin) {
 		return new Date(start.getTime() + hours * 3600000);
@@ -116,7 +117,7 @@ export function addWorkingHours(
 		const dayStart = new Date(current);
 		dayStart.setHours(0, 0, 0, 0);
 		const dow = current.getDay();
-		if (dow === 0 || dow === 6) {
+		if (!workDays.includes(dow)) {
 			current = new Date(dayStart.getTime() + 86400000);
 			continue;
 		}

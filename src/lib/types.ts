@@ -23,6 +23,7 @@ export type Project = {
 	userStories: string[];
 	workStart: number;
 	workEnd: number;
+	workDays: number[];
 };
 
 export type TaskStatus = 'backlog' | 'todo' | 'in_progress' | 'in_review' | 'done';
@@ -39,6 +40,7 @@ export type Task = {
 	priority: Priority;
 	estimate: number | null;
 	sortOrder: number;
+	originalDue: string;
 	due: string;
 	tags: string[];
 	updatedAt: string;

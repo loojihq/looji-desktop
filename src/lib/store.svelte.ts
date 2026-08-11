@@ -36,6 +36,7 @@ type ProjectRow = {
 	user_stories: string;
 	work_start: number;
 	work_end: number;
+	work_days: string;
 };
 
 type ProjectMemberRow = { project_id: string; member_id: string };
@@ -50,6 +51,7 @@ type TaskRow = {
 	priority: string;
 	estimate: number;
 	sort_order: number;
+	original_due: string;
 	due: string;
 	tags: string;
 	updated_at: string;
@@ -151,13 +153,25 @@ function memberFromRow(row: MemberRow): Member {
 	};
 }
 
-function projectFromRow(row: ProjectRow, memberIds: string[]): Project {
+	const DEFAULT_WORK_DAYS = [1, 2, 3, 4, 5];
+
+	function projectFromRow(row: ProjectRow, memberIds: string[]): Project {
 	let userStories: string[] = [];
 	try {
 		userStories = JSON.parse(row.user_stories) as string[];
 	} catch {
 		userStories = [];
 	}
+	let workDays: number[] = [];
+	try {
+		const parsed = JSON.parse(row.work_days) as unknown;
+		if (Array.isArray(parsed) && parsed.every((d) => typeof d === 'number')) {
+			workDays = parsed;
+		}
+	} catch {
+		workDays = [];
+	}
+	if (workDays.length === 0) workDays = DEFAULT_WORK_DAYS;
 	return {
 		id: row.id,
 		slug: row.slug,
@@ -171,7 +185,8 @@ function projectFromRow(row: ProjectRow, memberIds: string[]): Project {
 		spec: row.spec ?? '',
 		userStories,
 		workStart: row.work_start ?? 540,
-		workEnd: row.work_end ?? 1020
+		workEnd: row.work_end ?? 1020,
+		workDays
 	};
 }
 
@@ -192,6 +207,7 @@ function taskFromRow(row: TaskRow): Task {
 		priority: row.priority as Priority,
 		estimate: row.estimate > 0 ? row.estimate : null,
 		sortOrder: row.sort_order ?? 0,
+		originalDue: row.original_due ?? '',
 		due: row.due,
 		tags,
 		updatedAt: row.updated_at
@@ -448,7 +464,8 @@ export async function createProject(input: {
 		spec: '',
 		userStories: [],
 		workStart: 540,
-		workEnd: 1020
+		workEnd: 1020,
+		workDays: [1, 2, 3, 4, 5]
 	};
 	await database.execute(
 		'INSERT INTO projects (id, slug, name, description, status, progress, due, color) VALUES (?, ?, ?, ?, ?, 0, ?, ?)',
@@ -470,6 +487,7 @@ export async function updateProject(
 		due: string;
 		workStart?: number;
 		workEnd?: number;
+		workDays?: number[];
 	}
 ): Promise<void> {
 	const project = projects.find((p) => p.id === id);
@@ -497,15 +515,19 @@ export async function updateProject(
 	if (project.due !== input.due) changes.due = { from: project.due, to: input.due };
 	const workStart = input.workStart ?? project.workStart;
 	const workEnd = input.workEnd ?? project.workEnd;
+	const workDays = input.workDays ?? project.workDays;
 	if (project.workStart !== workStart || project.workEnd !== workEnd) {
 		changes.workingHours = {
 			from: `${minutesToTime(project.workStart)}–${minutesToTime(project.workEnd)}`,
 			to: `${minutesToTime(workStart)}–${minutesToTime(workEnd)}`
 		};
 	}
+	if (JSON.stringify(project.workDays) !== JSON.stringify(workDays)) {
+		changes.workDays = { from: [...project.workDays], to: [...workDays] };
+	}
 	await database.execute(
-		'UPDATE projects SET name = ?, description = ?, status = ?, due = ?, work_start = ?, work_end = ? WHERE id = ?',
-		[name, input.description.trim(), input.status, input.due, workStart, workEnd, id]
+		'UPDATE projects SET name = ?, description = ?, status = ?, due = ?, work_start = ?, work_end = ?, work_days = ? WHERE id = ?',
+		[name, input.description.trim(), input.status, input.due, workStart, workEnd, JSON.stringify(workDays), id]
 	);
 	project.name = name;
 	project.description = input.description.trim();
@@ -513,6 +535,7 @@ export async function updateProject(
 	project.due = input.due;
 	project.workStart = workStart;
 	project.workEnd = workEnd;
+	project.workDays = workDays;
 	if (Object.keys(changes).length > 0) {
 		await logAudit('project', id, 'updated', `Updated project "${project.name}"`, changes);
 	}
@@ -557,6 +580,7 @@ export async function createTask(input: {
 		priority: input.priority ?? 'medium',
 		estimate: input.estimate && input.estimate > 0 ? input.estimate : null,
 		sortOrder: input.sortOrder ?? 0,
+		originalDue: '',
 		due: input.due ?? daysFromNow(7),
 		tags: input.tags ?? [],
 		updatedAt: nowIso()
@@ -671,28 +695,32 @@ export async function moveTask(taskId: string, status: TaskStatus): Promise<void
 	if (!task || task.status === status) return;
 	const previous = task.status;
 	const updatedAt = nowIso();
+	const project = projects.find((p) => p.id === task.projectId);
+	const workStart = project?.workStart ?? 540;
+	const workEnd = project?.workEnd ?? 1020;
+	const workDays = project?.workDays ?? [1, 2, 3, 4, 5];
+
 	// When work actually starts, re-base the due time on the real current moment
-	// plus the remaining estimate, counted across the project's working hours
-	// (default 9am-5pm, Mon-Fri).
-	const originalDue = task.due;
-	let due = originalDue;
+	// plus the remaining estimate, counted across the project's working hours and
+	// workdays. The pre-recalc due is remembered so moving back can restore it.
+	const beforeDue = task.due;
+	let due = beforeDue;
+	let originalDue = task.originalDue;
 	if (status === 'in_progress' && task.estimate && task.estimate > 0) {
-		const project = projects.find((p) => p.id === task.projectId);
-		due = addWorkingHours(
-			new Date(),
-			task.estimate,
-			project?.workStart ?? 540,
-			project?.workEnd ?? 1020
-		).toISOString();
+		originalDue = beforeDue;
+		due = addWorkingHours(new Date(), task.estimate, workStart, workEnd, workDays).toISOString();
+	} else if ((status === 'todo' || status === 'backlog') && task.originalDue) {
+		due = task.originalDue;
+		originalDue = '';
 	}
-	await database.execute('UPDATE tasks SET status = ?, due = ?, updated_at = ? WHERE id = ?', [
-		status,
-		due,
-		updatedAt,
-		taskId
-	]);
+
+	await database.execute(
+		'UPDATE tasks SET status = ?, due = ?, original_due = ?, updated_at = ? WHERE id = ?',
+		[status, due, originalDue, updatedAt, taskId]
+	);
 	task.status = status;
 	task.due = due;
+	task.originalDue = originalDue;
 	task.updatedAt = updatedAt;
 	await logAudit(
 		'task',
@@ -701,7 +729,7 @@ export async function moveTask(taskId: string, status: TaskStatus): Promise<void
 		`Moved "${task.title}" from ${taskStatusStyles[previous].label} to ${taskStatusStyles[status].label}`,
 		{
 			status: { from: previous, to: status },
-			...(due !== originalDue ? { due: { from: originalDue, to: due } } : {})
+			...(due !== beforeDue ? { due: { from: beforeDue, to: due } } : {})
 		}
 	);
 }
