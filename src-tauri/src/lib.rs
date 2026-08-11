@@ -200,6 +200,18 @@ pub fn run() {
             sql: "ALTER TABLE projects ADD COLUMN repo_path TEXT NOT NULL DEFAULT ''",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 24,
+            description: "create_repo_index",
+            sql: "CREATE TABLE IF NOT EXISTS repo_index (
+                project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+                root TEXT NOT NULL DEFAULT '',
+                files TEXT NOT NULL DEFAULT '[]',
+                symbols TEXT NOT NULL DEFAULT '[]',
+                updated_at TEXT NOT NULL DEFAULT ''
+            )",
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()

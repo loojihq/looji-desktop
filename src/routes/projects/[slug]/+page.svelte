@@ -12,7 +12,16 @@
 	import Select from '$lib/components/Select.svelte';
 	import { checkTaskAgainstRepo, explainTask, generateAiDraft, suggestSpecialties, taskChatFollowUp, type RepoContext, type TaskChatMessage, type TaskContext } from '$lib/ai';
 	import { exportDraftPdf, exportProjectPdf } from '$lib/pdf';
-	import { isKeyFile, pickRelevantFiles, readRepoFiles, repoTreeText, scanRepo, type RepoScan } from '$lib/repo';
+	import {
+		extractSymbols,
+		isKeyFile,
+		readRelevantHunks,
+		readRepoFiles,
+		repoMapText,
+		repoTreeText,
+		scanRepo,
+		type RepoScan
+	} from '$lib/repo';
 	import { projectAccents, priorityStyles, projectStatusStyles, taskStatusStyles } from '$lib/badges';
 	import {
 		clearAiDraft,
@@ -21,6 +30,7 @@
 		deleteProject,
 		deleteTask,
 		loadAiDraft,
+		loadRepoIndex,
 		loadTaskExplanation,
 		loadTaskExplanationIds,
 		memberById,
@@ -30,6 +40,7 @@
 		projects,
 		publishAiDraft,
 		saveAiDraft,
+		saveRepoIndex,
 		saveTaskExplanation,
 		settings,
 		status,
@@ -443,6 +454,7 @@
 	// Connected local repository: scan state plus the per-task repo context
 	// that is injected into the AI prompts.
 	let repoScan = $state<RepoScan | null>(null);
+	let repoSymbols = $state<{ file: string; symbols: string[] }[]>([]);
 	let repoScanning = $state(false);
 	let repoScanError = $state('');
 	let explainRepo = $state<RepoContext | null>(null);
@@ -453,8 +465,26 @@
 		repoScanning = true;
 		repoScanError = '';
 		try {
-			repoScan = await scanRepo(project.repoPath);
-			if (repoScan.error) repoScanError = repoScan.error;
+			// Reuse the persisted index when the path is unchanged, so opening
+			// the chat doesn't re-walk the whole repository every time.
+			const cached = await loadRepoIndex(project.id);
+			if (cached && cached.root === project.repoPath && cached.files.length > 0) {
+				repoScan = { root: cached.root, files: cached.files, truncated: false, error: null };
+				repoSymbols = cached.symbols;
+				return;
+			}
+			const scan = await scanRepo(project.repoPath);
+			repoScan = scan;
+			if (scan.error) {
+				repoScanError = scan.error;
+				return;
+			}
+			repoSymbols = await extractSymbols(scan.root, scan.files);
+			await saveRepoIndex(project.id, {
+				root: scan.root,
+				files: scan.files,
+				symbols: repoSymbols
+			});
 		} catch (err) {
 			repoScanError = err instanceof Error ? err.message : String(err);
 		} finally {
@@ -462,21 +492,26 @@
 		}
 	}
 
-	/** Builds the repo context for a task: file tree + key files + files most
-	 *  likely related to the task. Cached per task while the modal is open. */
+	/** Builds the repo context for a task: file tree + symbol map + key files,
+	 *  plus hunks of the files the LOCAL retriever picks (path/symbol scoring,
+	 *  entry files, content matches). No extra model call — fast. Cached per
+	 *  task while the modal is open. */
 	async function ensureRepoContext(task: Task): Promise<RepoContext | null> {
 		if (!project?.repoPath) return null;
 		if (explainRepo && explainRepoTaskId === task.id) return explainRepo;
 		if (!repoScan && !repoScanning) await scanProjectRepo();
 		if (!repoScan || repoScan.error) return null;
 		const keywords = [task.title, task.description, ...task.tags].filter((k) => k.trim());
-		const relevant = pickRelevantFiles(repoScan.files, keywords, 6);
-		const keys = repoScan.files.filter((f) => isKeyFile(f.path)).slice(0, 4);
-		const contents = await readRepoFiles([...keys, ...relevant], 120_000);
+		const tree = repoTreeText(repoScan.files);
+		const map = repoMapText(repoSymbols);
+		const keys = repoScan.files.filter((f) => isKeyFile(f.path)).slice(0, 3);
+		const keyContents = await readRepoFiles(keys, 20_000);
+		const hunks = await readRelevantHunks(repoScan.root, repoScan.files, repoSymbols, keywords);
 		const ctx: RepoContext = {
 			root: repoScan.root,
-			tree: repoTreeText(repoScan.files),
-			contents
+			tree,
+			map,
+			contents: [...keyContents, ...hunks]
 		};
 		explainRepo = ctx;
 		explainRepoTaskId = task.id;
@@ -1150,6 +1185,7 @@
 				repoPath: projRepoPath.trim()
 			});
 			repoScan = null;
+			repoSymbols = [];
 			explainRepo = null;
 			explainRepoTaskId = null;
 			cancelProjectEdit();
@@ -2807,6 +2843,7 @@
 						class="ml-auto shrink-0 rounded-md p-1 text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-600 disabled:cursor-not-allowed disabled:opacity-50"
 						onclick={() => {
 							repoScan = null;
+							repoSymbols = [];
 							explainRepo = null;
 							explainRepoTaskId = null;
 							void scanProjectRepo();

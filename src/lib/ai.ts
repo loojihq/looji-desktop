@@ -344,6 +344,7 @@ export async function testDeepSeekConnection(apiKey: string, model: string): Pro
 export type RepoContext = {
 	root: string;
 	tree: string;
+	map: string;
 	contents: { path: string; content: string }[];
 };
 
@@ -394,9 +395,9 @@ function buildTaskContext(context: TaskContext): string {
 			: '- none';
 	let repoBlock = '';
 	if (context.repo) {
-		repoBlock = `\n\nLocal repository at: ${context.repo.root}\nFile tree:\n${context.repo.tree}`;
+		repoBlock = `\n\nLocal repository at: ${context.repo.root}\nFile tree:\n${context.repo.tree}\n\nSymbol map (file: functions/classes/types):\n${context.repo.map}`;
 		if (context.repo.contents.length > 0) {
-			repoBlock += `\n\nRelevant file contents (paths are absolute on the machine):\n${context.repo.contents
+			repoBlock += `\n\nRelevant file snippets (paths are absolute on the machine):\n${context.repo.contents
 				.map((f) => `### ${f.path}\n${f.content}`)
 				.join('\n\n')}`;
 		}
@@ -581,7 +582,9 @@ Review this task against the local code and report:
 1. Implementation status — is it implemented, partially implemented, or not started? Be specific and honest.
 2. Evidence — which files/functions/lines actually implement it (cite file paths).
 3. What is missing or incomplete, if anything.
-4. Review notes — risks, edge cases, test coverage, and a short recommendation for the reviewer (approve, needs work, or needs discussion).`
+4. Review notes — risks, edge cases, test coverage, and a short recommendation for the reviewer (approve, needs work, or needs discussion).
+
+Base your assessment ONLY on the file tree, symbol map and snippets provided above. Do not assume implementation exists outside that evidence.`
 			}
 		],
 		input.onDelta ?? (() => {}),

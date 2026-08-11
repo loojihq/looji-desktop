@@ -1,6 +1,7 @@
 import Database from '@tauri-apps/plugin-sql';
 import { avatarColors, taskStatusStyles } from './badges';
 import type { TaskChatMessage } from './ai';
+import type { RepoFile } from './repo';
 import type {
 	AiDraft,
 	AuditEntry,
@@ -1021,4 +1022,46 @@ export async function loadTaskExplanationIds(projectId: string): Promise<string[
 		[projectId]
 	);
 	return rows.map((r) => r.task_id);
+}
+
+type RepoIndexRow = {
+	root: string;
+	files: string;
+	symbols: string;
+};
+
+/** Saves the scanned repo index (file list + symbol map) for a project. */
+export async function saveRepoIndex(
+	projectId: string,
+	index: { root: string; files: RepoFile[]; symbols: { file: string; symbols: string[] }[] }
+): Promise<void> {
+	const database = requireDb();
+	await database.execute(
+		'INSERT INTO repo_index (project_id, root, files, symbols, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(project_id) DO UPDATE SET root = excluded.root, files = excluded.files, symbols = excluded.symbols, updated_at = excluded.updated_at',
+		[projectId, index.root, JSON.stringify(index.files), JSON.stringify(index.symbols), nowIso()]
+	);
+}
+
+/** Loads a previously scanned repo index for a project, or null when absent. */
+export async function loadRepoIndex(projectId: string): Promise<{
+	root: string;
+	files: RepoFile[];
+	symbols: { file: string; symbols: string[] }[];
+} | null> {
+	const database = requireDb();
+	const rows = await database.select<RepoIndexRow[]>(
+		'SELECT root, files, symbols FROM repo_index WHERE project_id = ?',
+		[projectId]
+	);
+	const row = rows[0];
+	if (!row) return null;
+	try {
+		return {
+			root: row.root,
+			files: JSON.parse(row.files) as RepoFile[],
+			symbols: JSON.parse(row.symbols) as { file: string; symbols: string[] }[]
+		};
+	} catch {
+		return null;
+	}
 }
