@@ -63,29 +63,6 @@ type AuditRow = {
 
 type SettingsRow = { key: string; value: string };
 
-export const taskTransitions: Record<TaskStatus, TaskStatus[]> = {
-	backlog: ['todo'],
-	todo: ['backlog', 'in_progress'],
-	in_progress: ['todo', 'in_review'],
-	in_review: ['in_progress', 'done'],
-	done: ['todo']
-};
-
-export function canTransition(from: TaskStatus, to: TaskStatus): boolean {
-	return from === to || taskTransitions[from].includes(to);
-}
-
-function assertTransition(from: TaskStatus, to: TaskStatus): void {
-	if (from === to) return;
-	if (!taskTransitions[from].includes(to)) {
-		throw new Error(
-			`Cannot move a task from ${taskStatusStyles[from].label} directly to ${taskStatusStyles[to].label}. Allowed next steps: ${taskTransitions[from]
-				.map((s) => taskStatusStyles[s].label)
-				.join(', ')}.`
-		);
-	}
-}
-
 function assertProjectName(name: string): void {
 	const trimmed = name.trim();
 	if (!trimmed) throw new Error('Project name is required.');
@@ -142,7 +119,8 @@ export const settings = $state<Settings>({
 	workspaceName: 'Workmaster',
 	timezone: 'America/Los_Angeles',
 	aiApiKey: '',
-	aiModel: 'deepseek-chat'
+	aiModel: 'deepseek-chat',
+	boardStatuses: ['todo', 'in_progress', 'done']
 });
 
 function requireDb(): Database {
@@ -598,7 +576,6 @@ export async function updateTask(
 	assertTaskTitle(input.title);
 	assertProjectExists(input.projectId);
 	assertMemberExists(input.assigneeId);
-	if (task.status !== input.status) assertTransition(task.status, input.status);
 	const database = requireDb();
 	const changes: AuditEntry['details'] = {};
 	if (task.title !== input.title.trim()) changes.title = { from: task.title, to: input.title.trim() };
@@ -662,7 +639,6 @@ export async function moveTask(taskId: string, status: TaskStatus): Promise<void
 	const database = requireDb();
 	const task = tasks.find((t) => t.id === taskId);
 	if (!task || task.status === status) return;
-	assertTransition(task.status, status);
 	const previous = task.status;
 	const updatedAt = nowIso();
 	await database.execute('UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?', [

@@ -2,7 +2,7 @@
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { ArrowLeft, CalendarDays, FileDown, Pencil, Plus, RefreshCw, Sparkles, Trash2, User, X } from '@lucide/svelte';
+	import { ArrowLeft, CalendarDays, Columns, FileDown, Gauge, LayoutGrid, List, Map, Pencil, Plus, RefreshCw, Sparkles, Trash2, User, X } from '@lucide/svelte';
 	import Avatar from '$lib/components/Avatar.svelte';
 	import Badge from '$lib/components/Badge.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
@@ -11,7 +11,6 @@
 	import { exportDraftPdf, exportProjectPdf } from '$lib/pdf';
 	import { projectAccents, priorityStyles, projectStatusStyles, taskStatusStyles } from '$lib/badges';
 	import {
-		canTransition,
 		createTask,
 		deleteProject,
 		deleteTask,
@@ -23,8 +22,8 @@
 		publishAiDraft,
 		settings,
 		tasks,
-		taskTransitions,
 		updateProject,
+		updateSetting,
 		updateTask
 	} from '$lib/store.svelte';
 	import {
@@ -47,19 +46,22 @@
 			: []
 	);
 
-	const columns: TaskStatus[] = ['todo', 'in_progress', 'done'];
+	const boardColumns = $derived.by(() => {
+		const order: TaskStatus[] = ['backlog', 'todo', 'in_progress', 'in_review', 'done'];
+		const core: TaskStatus[] = ['todo', 'in_progress', 'done'];
+		return order.filter((s) => core.includes(s) || settings.boardStatuses.includes(s));
+	});
 
-	// Backlog folds under "To do", and in-review under "In progress", so the
-	// board stays a focused 3-column kanban without hiding any tasks.
-	const columnStatuses: Partial<Record<TaskStatus, TaskStatus[]>> = {
-		todo: ['todo', 'backlog'],
-		in_progress: ['in_progress', 'in_review'],
-		done: ['done']
-	};
-
+	// Disabled statuses fold into their neighbours so no task ever disappears:
+	// backlog → To do, in_review → In progress.
 	function tasksInColumn(status: TaskStatus) {
 		if (!project) return [];
-		const included = columnStatuses[status] ?? [status];
+		const included =
+			status === 'todo' && !settings.boardStatuses.includes('backlog')
+				? ['todo', 'backlog']
+				: status === 'in_progress' && !settings.boardStatuses.includes('in_review')
+					? ['in_progress', 'in_review']
+					: [status];
 		return tasks.filter(
 			(task) => task.projectId === project.id && included.includes(task.status)
 		);
@@ -73,18 +75,9 @@
 
 	let draggingId = $state<string | null>(null);
 	let overStatus = $state<TaskStatus | null>(null);
-	let dropError = $state('');
-
-	function isValidTarget(status: TaskStatus): boolean {
-		if (!draggingId) return false;
-		const task = tasks.find((t) => t.id === draggingId);
-		if (!task) return false;
-		return canTransition(task.status, status);
-	}
 
 	type DragState = {
 		taskId: string;
-		from: TaskStatus;
 		x: number;
 		y: number;
 		offsetX: number;
@@ -94,7 +87,6 @@
 
 	type PendingDrag = {
 		taskId: string;
-		from: TaskStatus;
 		startX: number;
 		startY: number;
 		offsetX: number;
@@ -106,13 +98,12 @@
 	let pendingDrag = $state<PendingDrag | null>(null);
 	let suppressClick = $state(false);
 
-	function startDrag(event: PointerEvent, task: Task, from: TaskStatus) {
+	function startDrag(event: PointerEvent, task: Task) {
 		if (event.button !== 0) return;
 		const card = event.currentTarget as HTMLElement;
 		const rect = card.getBoundingClientRect();
 		pendingDrag = {
 			taskId: task.id,
-			from,
 			startX: event.clientX,
 			startY: event.clientY,
 			offsetX: event.clientX - rect.left,
@@ -134,7 +125,6 @@
 			draggingId = pendingDrag.taskId;
 			drag = {
 				taskId: pendingDrag.taskId,
-				from: pendingDrag.from,
 				x: event.clientX,
 				y: event.clientY,
 				offsetX: pendingDrag.offsetX,
@@ -153,20 +143,11 @@
 
 	function onDragEnd() {
 		if (drag) {
-			const { taskId, from } = drag;
+			const { taskId } = drag;
 			if (overStatus) {
 				const task = tasks.find((t) => t.id === taskId);
-				const target =
-					task && task.status !== overStatus && canTransition(task.status, overStatus)
-						? overStatus
-						: null;
-				if (target) {
-					dropError = '';
-					moveTask(taskId, target);
-				} else if (overStatus !== from && task && !canTransition(task.status, overStatus)) {
-					dropError = `Cannot move "${task.title}" from ${taskStatusStyles[task.status].label} directly to ${taskStatusStyles[overStatus].label}. Allowed next steps: ${taskTransitions[task.status]
-						.map((s) => taskStatusStyles[s].label)
-						.join(', ')}.`;
+				if (task && task.status !== overStatus) {
+					moveTask(taskId, overStatus);
 				}
 			}
 			suppressClick = true;
@@ -180,6 +161,89 @@
 		window.removeEventListener('pointerup', onDragEnd);
 		window.removeEventListener('pointercancel', onDragEnd);
 	}
+
+	let view = $state<'board' | 'list' | 'roadmap' | 'workload'>('board');
+	let columnsOpen = $state(false);
+
+	function toggleBoardStatus(status: TaskStatus) {
+		const enabled = settings.boardStatuses.includes(status);
+		updateSetting(
+			'boardStatuses',
+			enabled
+				? settings.boardStatuses.filter((s) => s !== status)
+				: [...settings.boardStatuses, status]
+		);
+	}
+
+	const projectTasks = $derived(
+		project ? tasks.filter((t) => t.projectId === project.id) : []
+	);
+
+	const listRows = $derived(
+		[...projectTasks].sort((a, b) => {
+			if (a.status === 'done' && b.status !== 'done') return 1;
+			if (a.status !== 'done' && b.status === 'done') return -1;
+			return new Date(a.due).getTime() - new Date(b.due).getTime();
+		})
+	);
+
+	const roadmapStart = $derived.by(() => {
+		const earliest =
+			projectTasks.length > 0
+				? Math.min(...projectTasks.map((t) => new Date(t.due).getTime()))
+				: Date.now();
+		const d = new Date(Math.min(earliest, Date.now()));
+		d.setHours(0, 0, 0, 0);
+		return d.getTime();
+	});
+
+	const roadmapEnd = $derived.by(() => {
+		const latest =
+			projectTasks.length > 0
+				? Math.max(...projectTasks.map((t) => new Date(t.due).getTime()))
+				: Date.now() + 86400000;
+		const d = new Date(latest);
+		d.setHours(0, 0, 0, 0);
+		d.setDate(d.getDate() + 1);
+		return d.getTime();
+	});
+
+	const roadmapTasks = $derived(
+		[...projectTasks]
+			.filter((t) => t.status !== 'done')
+			.sort((a, b) => new Date(a.due).getTime() - new Date(b.due).getTime())
+	);
+
+	function roadmapPct(due: string): number {
+		const span = roadmapEnd - roadmapStart;
+		if (span <= 0) return 0;
+		return Math.min(96, Math.max(1, ((new Date(due).getTime() - roadmapStart) / span) * 100));
+	}
+
+	const todayPct = $derived(roadmapPct(new Date().toISOString()));
+
+	const workloadRows = $derived(
+		members
+			.map((m) => {
+				const owned = projectTasks.filter((t) => t.assigneeId === m.id);
+				const open = owned.filter((t) => t.status !== 'done');
+				const done = owned.filter((t) => t.status === 'done');
+				return {
+					member: m,
+					openCount: open.length,
+					doneCount: done.length,
+					estimate: open.reduce((s, t) => s + (t.estimate ?? 0), 0)
+				};
+			})
+			.filter((r) => r.openCount + r.doneCount > 0)
+			.sort((a, b) => b.estimate - a.estimate)
+	);
+
+	const unassignedTasks = $derived(
+		projectTasks.filter((t) => !t.assigneeId && t.status !== 'done')
+	);
+
+	const allStatuses: TaskStatus[] = ['backlog', 'todo', 'in_progress', 'in_review', 'done'];
 
 	let addingStatus = $state<TaskStatus | null>(null);
 	let newTitle = $state('');
@@ -583,6 +647,89 @@
 					<FileDown size={15} />
 					{exporting ? 'Exporting…' : 'Export PDF'}
 				</button>
+				<div class="relative">
+					<button
+						type="button"
+						class="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-surface px-3 py-2 text-sm font-medium text-neutral-600 transition-colors hover:bg-neutral-50"
+						onclick={() => (columnsOpen = !columnsOpen)}
+					>
+						<Columns size={15} />
+						Columns
+					</button>
+					{#if columnsOpen}
+						<div
+							class="fixed inset-0 z-20"
+							role="presentation"
+							onclick={() => (columnsOpen = false)}
+						></div>
+						<div
+							class="absolute right-0 top-full z-30 mt-1.5 w-64 rounded-xl border border-neutral-200 bg-surface p-3 shadow-lg"
+						>
+							<p class="text-xs font-semibold text-neutral-600">Board columns</p>
+							<div class="mt-2 space-y-1">
+								<label
+									class="flex items-center gap-2 rounded-lg px-1 py-1 text-sm text-neutral-600"
+								>
+									<input
+										type="checkbox"
+										class="size-4 rounded border-neutral-300 text-indigo-600 focus:ring-indigo-500"
+										checked
+										disabled
+									/>
+									To do
+								</label>
+								<label
+									class="flex items-center gap-2 rounded-lg px-1 py-1 text-sm text-neutral-600"
+								>
+									<input
+										type="checkbox"
+										class="size-4 rounded border-neutral-300 text-indigo-600 focus:ring-indigo-500"
+										checked
+										disabled
+									/>
+									In progress
+								</label>
+								<label
+									class="flex items-center gap-2 rounded-lg px-1 py-1 text-sm text-neutral-600"
+								>
+									<input
+										type="checkbox"
+										class="size-4 rounded border-neutral-300 text-indigo-600 focus:ring-indigo-500"
+										checked
+										disabled
+									/>
+									Done
+								</label>
+								<label
+									class="flex items-center gap-2 rounded-lg px-1 py-1 text-sm text-neutral-700"
+								>
+									<input
+										type="checkbox"
+										class="size-4 rounded border-neutral-300 text-indigo-600 focus:ring-indigo-500"
+										checked={settings.boardStatuses.includes('backlog')}
+										onchange={() => toggleBoardStatus('backlog')}
+									/>
+									Backlog
+								</label>
+								<label
+									class="flex items-center gap-2 rounded-lg px-1 py-1 text-sm text-neutral-700"
+								>
+									<input
+										type="checkbox"
+										class="size-4 rounded border-neutral-300 text-indigo-600 focus:ring-indigo-500"
+										checked={settings.boardStatuses.includes('in_review')}
+										onchange={() => toggleBoardStatus('in_review')}
+									/>
+									In review
+								</label>
+							</div>
+							<p class="mt-2 border-t border-neutral-100 pt-2 text-[11px] text-neutral-400">
+								To do, In progress and Done are always shown. Backlog and In review are
+								optional — disabled ones fold into the nearest column.
+							</p>
+						</div>
+					{/if}
+				</div>
 				<span
 					class="inline-flex items-center gap-1.5 rounded-lg bg-neutral-100 px-3 py-1.5 text-sm font-medium text-neutral-600"
 				>
@@ -643,7 +790,57 @@
 		</div>
 	{/if}
 
-	{#if projectEditOpen}
+	<div
+		class="mt-6 flex w-fit items-center gap-1 rounded-lg border border-neutral-200 bg-surface p-1 shadow-xs"
+	>
+		<button
+			type="button"
+			onclick={() => (view = 'board')}
+			class="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors {view ===
+			'board'
+				? 'bg-indigo-600 text-white shadow-sm'
+				: 'text-neutral-600 hover:bg-neutral-100'}"
+		>
+			<LayoutGrid size={15} />
+			Board
+		</button>
+		<button
+			type="button"
+			onclick={() => (view = 'list')}
+			class="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors {view ===
+			'list'
+				? 'bg-indigo-600 text-white shadow-sm'
+				: 'text-neutral-600 hover:bg-neutral-100'}"
+		>
+			<List size={15} />
+			List
+		</button>
+		<button
+			type="button"
+			onclick={() => (view = 'roadmap')}
+			class="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors {view ===
+			'roadmap'
+				? 'bg-indigo-600 text-white shadow-sm'
+				: 'text-neutral-600 hover:bg-neutral-100'}"
+		>
+			<Map size={15} />
+			Roadmap
+		</button>
+		<button
+			type="button"
+			onclick={() => (view = 'workload')}
+			class="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors {view ===
+			'workload'
+				? 'bg-indigo-600 text-white shadow-sm'
+				: 'text-neutral-600 hover:bg-neutral-100'}"
+		>
+			<Gauge size={15} />
+			Workload
+		</button>
+	</div>
+
+	{#if view === 'board'}
+		{#if projectEditOpen}
 		<form
 			onsubmit={handleProjectSave}
 			class="mt-4 rounded-xl border border-indigo-200 bg-indigo-50/60 p-4 shadow-xs"
@@ -1188,31 +1385,16 @@
 				</button>
 			</div>
 		{/if}
-		{#if dropError}
-			<div class="mb-4 flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
-				<p>{dropError}</p>
-				<button
-					type="button"
-					class="shrink-0 rounded-md p-1 text-red-400 hover:bg-red-100 hover:text-red-700"
-					aria-label="Dismiss"
-					onclick={() => (dropError = '')}
-				>
-					<X size={14} />
-				</button>
-			</div>
-		{/if}
-		<div class="flex gap-4 overflow-x-auto pb-4">
-			{#each columns as status (status)}
+			<div class="flex gap-4 overflow-x-auto pb-4">
+			{#each boardColumns as status (status)}
 				<div
 					role="group"
 					aria-label={taskStatusStyles[status].label}
 					data-status={status}
-					class="w-72 shrink-0 rounded-xl border p-3 transition-colors {overStatus === status &&
-					isValidTarget(status)
+					class="w-72 shrink-0 rounded-xl border p-3 transition-colors {overStatus ===
+					status
 						? 'border-indigo-300 bg-indigo-50/70'
-						: 'border-neutral-200 bg-neutral-50/80'} {draggingId && !isValidTarget(status)
-						? 'opacity-50'
-						: ''}"
+						: 'border-neutral-200 bg-neutral-50/80'}"
 				>
 					<header class="mb-3 flex items-center gap-2 px-1">
 						<span class="size-2 rounded-full {taskStatusStyles[status].dot}"></span>
@@ -1240,7 +1422,7 @@
 						{#each tasksInColumn(status) as task (task.id)}
 							{@const assignee = memberById(task.assigneeId)}
 							<div
-								onpointerdown={(event) => startDrag(event, task, status)}
+								onpointerdown={(event) => startDrag(event, task)}
 								onclick={() => {
 									if (suppressClick) {
 										suppressClick = false;
@@ -1426,7 +1608,195 @@
 				</div>
 			{/if}
 		{/if}
-	</section>
+		</section>
+	{:else if view === 'list'}
+		<section class="mt-6 overflow-hidden rounded-xl border border-neutral-200 bg-surface shadow-xs">
+			<div class="overflow-x-auto">
+				<table class="w-full min-w-[760px] text-left">
+					<thead>
+						<tr
+							class="border-b border-neutral-200 text-xs font-semibold tracking-wider text-neutral-400 uppercase"
+						>
+							<th class="px-5 py-3">Task</th>
+							<th class="px-3 py-3">Status</th>
+							<th class="px-3 py-3">Priority</th>
+							<th class="px-3 py-3">Assignee</th>
+							<th class="px-3 py-3">Estimate</th>
+							<th class="px-5 py-3">Due</th>
+						</tr>
+					</thead>
+					<tbody>
+						{#each listRows as task (task.id)}
+							{@const assignee = memberById(task.assigneeId)}
+							<tr
+								class="border-b border-neutral-100 last:border-b-0 hover:bg-neutral-50 {task.status ===
+								'done'
+									? 'bg-neutral-50/50'
+									: ''}"
+							>
+								<td class="px-5 py-3">
+									<p
+										class="text-sm font-medium {task.status === 'done'
+											? 'text-neutral-400 line-through'
+											: 'text-neutral-800'}"
+									>
+										{task.title}
+									</p>
+									{#if task.description}
+										<p class="mt-0.5 line-clamp-1 text-xs text-neutral-500">
+											{task.description}
+										</p>
+									{/if}
+								</td>
+								<td class="px-3 py-3"><Badge variant="task" value={task.status} /></td>
+								<td class="px-3 py-3"><Badge variant="priority" value={task.priority} /></td>
+								<td class="px-3 py-3">
+									{#if assignee}
+										<span class="flex items-center gap-2 text-sm text-neutral-600">
+											<Avatar member={assignee} size="sm" />
+											{assignee.name}
+										</span>
+									{:else}
+										<span class="text-sm text-neutral-400">Unassigned</span>
+									{/if}
+								</td>
+								<td class="px-3 py-3 text-sm text-neutral-600">
+									{formatEstimate(task.estimate) || '—'}
+								</td>
+								<td
+									class="px-5 py-3 text-sm {isOverdue(task.due) && task.status !== 'done'
+										? 'font-medium text-red-600'
+										: 'text-neutral-500'}"
+								>
+									{dueLabel(task.due)}
+								</td>
+							</tr>
+						{:else}
+							<tr>
+								<td colspan="6" class="px-5 py-16 text-center text-sm text-neutral-400">
+									No tasks yet.
+								</td>
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+			</div>
+		</section>
+	{:else if view === 'roadmap'}
+		<section class="mt-6 rounded-xl border border-neutral-200 bg-surface p-5 shadow-xs">
+			<header class="flex items-center justify-between">
+				<h2 class="font-semibold tracking-tight text-neutral-900">Roadmap</h2>
+				<p class="text-xs text-neutral-400">{roadmapTasks.length} open tasks by target date</p>
+			</header>
+			{#if roadmapTasks.length === 0}
+				<p class="py-12 text-center text-sm text-neutral-400">
+					No open tasks with dates yet.
+				</p>
+			{:else}
+				<div class="mt-4">
+					<div class="mb-2 flex items-center justify-between text-xs text-neutral-400">
+						<span>{formatDate(new Date(roadmapStart).toISOString())}</span>
+						<span class="font-medium text-indigo-600">Today</span>
+						<span>{formatDate(new Date(roadmapEnd).toISOString())}</span>
+					</div>
+					<ul class="divide-y divide-neutral-100">
+						{#each roadmapTasks as task (task.id)}
+							<li class="flex items-center gap-3 py-2.5">
+								<div class="w-56 min-w-0">
+									<p class="truncate text-sm font-medium text-neutral-800">{task.title}</p>
+									<p class="text-xs text-neutral-400">{dueLabel(task.due)}</p>
+								</div>
+								<div class="relative h-5 flex-1 rounded-full bg-neutral-100/80">
+									{#if todayPct > 0 && todayPct < 100}
+										<span
+												class="absolute inset-y-0 w-px bg-indigo-400"
+												style="left: {todayPct}%"
+											></span>
+									{/if}
+									<span
+										class="absolute inset-y-0 my-auto h-4 w-2 rounded-full {taskStatusStyles[task.status].dot}"
+										style="left: {roadmapPct(task.due)}%"
+										title="{task.title} · {dueLabel(task.due)}"
+									></span>
+								</div>
+							</li>
+						{/each}
+					</ul>
+				</div>
+				<footer
+					class="mt-3 flex flex-wrap items-center gap-4 border-t border-neutral-100 pt-3 text-[11px] text-neutral-400"
+				>
+					<span class="flex items-center gap-1.5">
+						<span class="inline-block h-2 w-1.5 rounded-full bg-indigo-400"></span>
+						Today
+					</span>
+					{#each allStatuses as s (s)}
+						<span class="flex items-center gap-1.5">
+							<span
+								class="inline-block h-2 w-1.5 rounded-full {taskStatusStyles[s].dot}"
+							></span>
+							{taskStatusStyles[s].label}
+						</span>
+					{/each}
+				</footer>
+			{/if}
+		</section>
+	{:else}
+		<section class="mt-6 rounded-xl border border-neutral-200 bg-surface p-5 shadow-xs">
+			<header class="flex items-center justify-between">
+				<h2 class="font-semibold tracking-tight text-neutral-900">Workload</h2>
+				<p class="text-xs text-neutral-400">Open effort per team member</p>
+			</header>
+			<div class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+				{#each workloadRows as row (row.member.id)}
+					{@const total = row.openCount + row.doneCount}
+					<div class="rounded-xl border border-neutral-200 p-4">
+						<div class="flex items-center gap-3">
+							<Avatar member={row.member} />
+							<div class="min-w-0">
+								<p class="truncate text-sm font-semibold text-neutral-900">
+									{row.member.name}
+								</p>
+								<p class="text-xs text-neutral-400">
+									{row.openCount} open · {row.doneCount} done
+								</p>
+							</div>
+							{#if row.estimate > 0}
+								<span
+									class="ml-auto rounded-md bg-indigo-50 px-2 py-0.5 text-xs font-semibold text-indigo-700"
+								>
+									~{formatEstimate(row.estimate)}
+								</span>
+							{/if}
+						</div>
+						<div class="mt-3">
+							<ProgressBar
+								value={total > 0 ? (row.doneCount / total) * 100 : 0}
+								color="bg-emerald-500"
+							/>
+						</div>
+					</div>
+				{/each}
+				{#if unassignedTasks.length > 0}
+					<div class="rounded-xl border border-dashed border-neutral-300 p-4">
+						<div class="flex items-center gap-3">
+							<span
+								class="flex size-8 shrink-0 items-center justify-center rounded-full bg-neutral-200 text-neutral-500"
+							>
+								<User size={14} />
+							</span>
+							<div class="min-w-0">
+								<p class="text-sm font-semibold text-neutral-900">Unassigned</p>
+								<p class="text-xs text-neutral-400">
+									{unassignedTasks.length} open tasks
+								</p>
+							</div>
+						</div>
+					</div>
+				{/if}
+			</div>
+		</section>
+	{/if}
 
 	{#if project?.spec || (project?.userStories?.length ?? 0) > 0}
 		<section class="mt-6 rounded-xl border border-neutral-200 bg-surface p-5 shadow-xs">
