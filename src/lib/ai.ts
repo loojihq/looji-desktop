@@ -391,14 +391,95 @@ ${others}`;
 }
 
 /**
+ * Streams a chat completion from DeepSeek (SSE), calling onDelta for each
+ * content chunk as it arrives. Resolves with the full text.
+ */
+async function streamChat(
+	apiKey: string,
+	model: string,
+	messages: ChatMessage[],
+	onDelta: (delta: string) => void,
+	signal?: AbortSignal
+): Promise<string> {
+	const response = await fetch(DEEPSEEK_URL, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+			Authorization: `Bearer ${apiKey}`
+		},
+		signal,
+		body: JSON.stringify({
+			model: model || DEFAULT_MODEL,
+			messages,
+			temperature: 0.7,
+			stream: true
+		})
+	});
+	if (!response.ok) {
+		let detail = '';
+		try {
+			detail = await response.text();
+		} catch {
+			// ignore body read errors
+		}
+		throw new Error(`DeepSeek API error (${response.status}): ${detail.slice(0, 400)}`);
+	}
+	if (!response.body) {
+		throw new Error('DeepSeek returned no stream body.');
+	}
+
+	const reader = response.body.getReader();
+	const decoder = new TextDecoder();
+	let buffer = '';
+	let full = '';
+	let finishReason = 'unknown';
+	while (true) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		buffer += decoder.decode(value, { stream: true });
+		const lines = buffer.split('\n');
+		buffer = lines.pop() ?? '';
+		for (const line of lines) {
+			const trimmed = line.trim();
+			if (!trimmed.startsWith('data:')) continue;
+			const payload = trimmed.slice(5).trim();
+			if (payload === '[DONE]') continue;
+			try {
+				const parsed = JSON.parse(payload) as {
+					choices?: { delta?: { content?: unknown }; finish_reason?: unknown }[];
+				};
+				const choice = parsed.choices?.[0];
+				const delta = choice?.delta?.content;
+				const reason = choice?.finish_reason;
+				if (typeof reason === 'string' && reason) finishReason = reason;
+				if (typeof delta === 'string' && delta) {
+					full += delta;
+					onDelta(delta);
+				}
+			} catch {
+				// skip malformed keep-alive/comment lines
+			}
+		}
+	}
+	if (!full.trim()) {
+		throw new Error(
+			`DeepSeek returned an empty response (finish_reason: ${finishReason}). Try again.`
+		);
+	}
+	return full;
+}
+
+/**
  * Explains a task for the person doing it: what it needs, how to implement it,
  * how it relates to the rest of the project, and who is involved.
  */
 export async function explainTask(input: TaskContext & {
 	apiKey: string;
 	model: string;
+	onDelta?: (delta: string) => void;
+	signal?: AbortSignal;
 }): Promise<string> {
-	const { content } = await chat(
+	const content = await streamChat(
 		input.apiKey,
 		input.model,
 		[
@@ -414,7 +495,8 @@ Explain the task for the person doing it:
 4. Any risks, edge cases, or gotchas to watch for.`
 			}
 		],
-		false
+		input.onDelta ?? (() => {}),
+		input.signal
 	);
 	return content.trim();
 }
@@ -429,6 +511,8 @@ export async function taskChatFollowUp(input: {
 	question: string;
 	apiKey: string;
 	model: string;
+	onDelta?: (delta: string) => void;
+	signal?: AbortSignal;
 }): Promise<string> {
 	const messages: ChatMessage[] = [
 		{ role: 'system', content: TASK_SYSTEM_PROMPT },
@@ -436,7 +520,13 @@ export async function taskChatFollowUp(input: {
 		...input.history.map((m) => ({ role: m.role, content: m.content })),
 		{ role: 'user', content: input.question }
 	];
-	const { content } = await chat(input.apiKey, input.model, messages, false);
+	const content = await streamChat(
+		input.apiKey,
+		input.model,
+		messages,
+		input.onDelta ?? (() => {}),
+		input.signal
+	);
 	return content.trim();
 }
 

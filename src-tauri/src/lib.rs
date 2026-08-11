@@ -178,6 +178,16 @@ pub fn run() {
             sql: "ALTER TABLE tasks ADD COLUMN original_due TEXT NOT NULL DEFAULT ''",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 21,
+            description: "create_task_explanations",
+            sql: "CREATE TABLE IF NOT EXISTS task_explanations (
+                task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+                messages TEXT NOT NULL DEFAULT '[]',
+                updated_at TEXT NOT NULL DEFAULT ''
+            )",
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()

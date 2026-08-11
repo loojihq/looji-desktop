@@ -22,6 +22,8 @@
 		try {
 			aiModels = await fetchDeepSeekModels(settings.aiApiKey);
 			aiModelsLoaded = true;
+			// Persist the list so the task-explanation modal can offer the same models.
+			await updateSetting('aiModels', aiModels);
 		} catch (err) {
 			aiModelsError = err instanceof Error ? err.message : String(err);
 		} finally {
@@ -54,6 +56,7 @@
 
 	function handleKeyChange() {
 		updateSetting('aiApiKey', settings.aiApiKey);
+		updateSetting('aiModels', []);
 		aiModelsLoaded = false;
 		aiModels = [];
 		aiModelsError = '';

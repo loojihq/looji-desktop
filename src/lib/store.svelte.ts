@@ -1,5 +1,6 @@
 import Database from '@tauri-apps/plugin-sql';
 import { avatarColors, taskStatusStyles } from './badges';
+import type { TaskChatMessage } from './ai';
 import type {
 	AiDraft,
 	AuditEntry,
@@ -126,6 +127,7 @@ export const settings = $state<Settings>({
 	timezone: 'America/Los_Angeles',
 	aiApiKey: '',
 	aiModel: 'deepseek-chat',
+	aiModels: [],
 	boardStatuses: ['todo', 'in_progress', 'done']
 });
 
@@ -902,4 +904,60 @@ export async function loadAiDraft(projectId: string): Promise<SavedAiDraft | nul
 export async function clearAiDraft(projectId: string): Promise<void> {
 	const database = requireDb();
 	await database.execute('DELETE FROM ai_drafts WHERE project_id = ?', [projectId]);
+}
+
+type TaskExplanationRow = {
+	messages: string;
+};
+
+/** Persists a task's AI explanation conversation so it can be resumed later. */
+export async function saveTaskExplanation(
+	taskId: string,
+	messages: TaskChatMessage[]
+): Promise<void> {
+	const database = requireDb();
+	await database.execute(
+		'INSERT INTO task_explanations (task_id, messages, updated_at) VALUES (?, ?, ?) ON CONFLICT(task_id) DO UPDATE SET messages = excluded.messages, updated_at = excluded.updated_at',
+		[taskId, JSON.stringify(messages), nowIso()]
+	);
+}
+
+/** Loads a saved explanation conversation for a task, or null when none exists. */
+export async function loadTaskExplanation(taskId: string): Promise<TaskChatMessage[] | null> {
+	const database = requireDb();
+	const rows = await database.select<TaskExplanationRow[]>(
+		'SELECT messages FROM task_explanations WHERE task_id = ?',
+		[taskId]
+	);
+	const row = rows[0];
+	if (!row) return null;
+	try {
+		const parsed: unknown = JSON.parse(row.messages);
+		if (!Array.isArray(parsed)) return null;
+		return parsed.filter(
+			(m): m is TaskChatMessage =>
+				typeof m === 'object' &&
+				m !== null &&
+				(m.role === 'user' || m.role === 'assistant') &&
+				typeof m.content === 'string'
+		);
+	} catch {
+		return null;
+	}
+}
+
+/** Removes a task's saved explanation conversation (e.g. when starting fresh). */
+export async function clearTaskExplanation(taskId: string): Promise<void> {
+	const database = requireDb();
+	await database.execute('DELETE FROM task_explanations WHERE task_id = ?', [taskId]);
+}
+
+/** Lists task ids in a project that already have a saved explanation. */
+export async function loadTaskExplanationIds(projectId: string): Promise<string[]> {
+	const database = requireDb();
+	const rows = await database.select<{ task_id: string }[]>(
+		'SELECT task_id FROM task_explanations WHERE task_id IN (SELECT id FROM tasks WHERE project_id = ?)',
+		[projectId]
+	);
+	return rows.map((r) => r.task_id);
 }

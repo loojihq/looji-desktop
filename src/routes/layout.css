@@ -169,3 +169,52 @@ body {
 }
 
 /* The app uses the default indigo scale as its accent. */
+
+/* Markdown rendering for AI explanations (see Markdown.svelte). The prose
+   variables reference the app's neutral ramp, which is inverted in dark mode,
+   so typography adapts automatically. */
+.prose {
+	--tw-prose-body: var(--color-neutral-700);
+	--tw-prose-headings: var(--color-neutral-900);
+	--tw-prose-lead: var(--color-neutral-600);
+	--tw-prose-links: var(--color-indigo-600);
+	--tw-prose-bold: var(--color-neutral-900);
+	--tw-prose-counters: var(--color-neutral-500);
+	--tw-prose-bullets: var(--color-neutral-400);
+	--tw-prose-hr: var(--color-neutral-200);
+	--tw-prose-quotes: var(--color-neutral-600);
+	--tw-prose-quote-borders: var(--color-neutral-200);
+	--tw-prose-captions: var(--color-neutral-500);
+	--tw-prose-code: var(--color-neutral-800);
+	--tw-prose-code-bg: var(--color-neutral-100);
+	--tw-prose-pre-code: var(--color-neutral-700);
+	--tw-prose-pre-bg: var(--color-neutral-100);
+	--tw-prose-th-borders: var(--color-neutral-300);
+	--tw-prose-td-borders: var(--color-neutral-200);
+}
+
+.prose pre {
+	border: 1px solid var(--color-neutral-200);
+	border-radius: 0.75rem;
+	overflow-x: auto;
+}
+
+.prose :where(code):not(:where([class~='not-prose'] *)) {
+	background-color: var(--color-neutral-100);
+	border-radius: 0.375rem;
+	padding: 0.125em 0.375em;
+	font-weight: 500;
+}
+
+.prose :where(pre):not(:where([class~='not-prose'] *)) code {
+	background-color: transparent;
+	border: 0;
+	padding: 0;
+	font-weight: 400;
+}
+
+/* Copy buttons on code blocks (added dynamically by Markdown.svelte). */
+.wm-codeblock:hover .wm-copy-btn,
+.wm-copy-btn:focus-visible {
+	opacity: 1;
+}

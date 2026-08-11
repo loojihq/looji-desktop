@@ -67,6 +67,7 @@ export type Settings = {
 	timezone: string;
 	aiApiKey: string;
 	aiModel: string;
+	aiModels: string[];
 	boardStatuses: TaskStatus[];
 };
 

@@ -6,16 +6,20 @@
 	import Avatar from '$lib/components/Avatar.svelte';
 	import Badge from '$lib/components/Badge.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+	import Markdown from '$lib/components/Markdown.svelte';
 	import ProgressBar from '$lib/components/ProgressBar.svelte';
 	import { explainTask, generateAiDraft, suggestSpecialties, taskChatFollowUp, type TaskChatMessage, type TaskContext } from '$lib/ai';
 	import { exportDraftPdf, exportProjectPdf } from '$lib/pdf';
 	import { projectAccents, priorityStyles, projectStatusStyles, taskStatusStyles } from '$lib/badges';
 	import {
 		clearAiDraft,
+		clearTaskExplanation,
 		createTask,
 		deleteProject,
 		deleteTask,
 		loadAiDraft,
+		loadTaskExplanation,
+		loadTaskExplanationIds,
 		memberById,
 		members,
 		moveTask,
@@ -23,6 +27,7 @@
 		projects,
 		publishAiDraft,
 		saveAiDraft,
+		saveTaskExplanation,
 		settings,
 		status,
 		tasks,
@@ -371,12 +376,51 @@
 	}
 
 	// "Explain task" modal — a persistent conversation about a single task.
-	// It can only be closed via the ✕ button or Cancel (no backdrop click, no Esc).
+	// The conversation is saved to the database per task, so it survives closing
+	// the modal or restarting the app. It can only be closed via ✕ or Cancel.
 	let explainTarget = $state<Task | null>(null);
 	let explainMessages = $state<TaskChatMessage[]>([]);
+	let explainPending = $state('');
 	let explainInput = $state('');
 	let explainBusy = $state(false);
 	let explainError = $state('');
+	let explainAbort = $state<AbortController | null>(null);
+	let conversationEl = $state<HTMLDivElement | null>(null);
+	// Model used for THIS chat — independent of the global planning model
+	// (settings.aiModel is only for project planning / spec generation).
+	let explainModel = $state(settings.aiModel);
+
+	// Tasks in this project that already have a saved explanation → the card
+	// button reads "Open explanation" instead of "Explain task".
+	let explainedTaskIds = $state<Set<string>>(new Set());
+
+	$effect(() => {
+		if (!project || !status.ready) return;
+		void explainedTaskIds;
+		loadTaskExplanationIds(project.id)
+			.then((ids) => {
+				explainedTaskIds = new Set(ids);
+			})
+			.catch((err) => console.error('Failed to load explanation ids', err));
+	});
+
+	function markExplained(taskId: string) {
+		explainedTaskIds = new Set(explainedTaskIds).add(taskId);
+	}
+
+	// Keep the latest reply in view while it streams in, unless the user has
+	// scrolled up to re-read something.
+	$effect(() => {
+		if (!explainTarget || !conversationEl) return;
+		void explainMessages;
+		void explainPending;
+		const el = conversationEl;
+		const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 140;
+		if (!nearBottom) return;
+		requestAnimationFrame(() => {
+			el.scrollTop = el.scrollHeight;
+		});
+	});
 
 	function explainContext(task: Task): TaskContext {
 		const assignee = memberById(task.assigneeId);
@@ -402,53 +446,141 @@
 		};
 	}
 
-	async function handleExplain(task: Task) {
-		if (!project || !settings.aiApiKey || explainBusy) return;
-		explainTarget = task;
+	/** Multi-line pastes (usually code) are sent as a fenced block so they render
+	 *  with proper code formatting instead of being collapsed by markdown. */
+	function formatUserMessage(text: string): string {
+		if (!text.includes('\n')) return text;
+		if (/^```/m.test(text)) return text;
+		return '```\n' + text + '\n```';
+	}
+
+	async function generateExplanation(task: Task) {
 		explainMessages = [];
+		explainPending = '';
 		explainError = '';
 		explainBusy = true;
+		const abort = new AbortController();
+		explainAbort = abort;
 		try {
 			const text = await explainTask({
 				...explainContext(task),
 				apiKey: settings.aiApiKey,
-				model: settings.aiModel
+				model: explainModel,
+				onDelta: (delta) => (explainPending += delta),
+				signal: abort.signal
 			});
-			explainMessages = [{ role: 'assistant', content: text }];
+			const messages: TaskChatMessage[] = [{ role: 'assistant', content: text }];
+			explainMessages = messages;
+			explainPending = '';
+			await saveTaskExplanation(task.id, messages);
+			markExplained(task.id);
 		} catch (err) {
+			if (abort.signal.aborted) {
+				explainPending = '';
+				return;
+			}
 			explainError = err instanceof Error ? err.message : String(err);
+			explainPending = '';
 		} finally {
 			explainBusy = false;
+			explainAbort = null;
 		}
 	}
 
-	async function sendFollowUp() {
-		const question = explainInput.trim();
-		if (!question || !explainTarget || explainBusy || !settings.aiApiKey) return;
-		const history = explainMessages;
-		explainMessages = [...explainMessages, { role: 'user', content: question }];
+	async function handleExplain(task: Task) {
+		if (!project || !settings.aiApiKey || explainBusy) return;
+		explainTarget = task;
+		explainError = '';
+		// Resume a saved conversation when one exists; otherwise start fresh.
+		const saved = await loadTaskExplanation(task.id);
+		if (saved && saved.length > 0) {
+			explainMessages = saved;
+			return;
+		}
+		await generateExplanation(task);
+	}
+
+	/** Discards the saved conversation and regenerates a fresh explanation. */
+	async function newExplanation() {
+		if (!explainTarget || explainBusy) return;
+		await clearTaskExplanation(explainTarget.id);
+		const remaining = new Set(explainedTaskIds);
+		remaining.delete(explainTarget.id);
+		explainedTaskIds = remaining;
+		await generateExplanation(explainTarget);
+	}
+
+	/** Number of user questions that are still waiting for an answer. */
+	const unansweredCount = $derived.by(() => {
+		let count = 0;
+		for (let i = explainMessages.length - 1; i >= 0; i--) {
+			if (explainMessages[i].role === 'user') count++;
+			else break;
+		}
+		return count;
+	});
+
+	/** Sends a follow-up. The input is never blocked: if a reply is still
+	 *  streaming, the question is shown immediately and queued for answering. */
+	function sendFollowUp() {
+		const raw = explainInput.trim();
+		if (!raw || !explainTarget || !settings.aiApiKey) return;
+		const question = formatUserMessage(raw);
 		explainInput = '';
 		explainError = '';
+		explainMessages = [...explainMessages, { role: 'user', content: question }];
+		void answerNext();
+	}
+
+	/** Answers the first unanswered user question in the conversation. */
+	async function answerNext() {
+		if (!explainTarget || explainBusy || explainMessages.length === 0) return;
+		// Everything after the last assistant reply is unanswered (user) input.
+		let start = 0;
+		for (let i = 0; i < explainMessages.length; i++) {
+			if (explainMessages[i].role === 'assistant') start = i + 1;
+		}
+		const question = explainMessages[start]?.content;
+		if (!question) return;
+		const task = explainTarget;
+		explainPending = '';
 		explainBusy = true;
+		const abort = new AbortController();
+		explainAbort = abort;
 		try {
 			const text = await taskChatFollowUp({
-				context: explainContext(explainTarget),
-				history,
+				context: explainContext(task),
+				history: explainMessages.slice(0, start),
 				question,
 				apiKey: settings.aiApiKey,
-				model: settings.aiModel
+				model: explainModel,
+				onDelta: (delta) => (explainPending += delta),
+				signal: abort.signal
 			});
 			explainMessages = [...explainMessages, { role: 'assistant', content: text }];
+			explainPending = '';
+			await saveTaskExplanation(task.id, explainMessages);
+			markExplained(task.id);
 		} catch (err) {
+			if (abort.signal.aborted) {
+				explainPending = '';
+				return;
+			}
 			explainError = err instanceof Error ? err.message : String(err);
+			explainPending = '';
 		} finally {
 			explainBusy = false;
+			explainAbort = null;
+			// Answer any questions that were queued while this one was streaming.
+			void answerNext();
 		}
 	}
 
 	function closeExplain() {
+		explainAbort?.abort();
 		explainTarget = null;
 		explainMessages = [];
+		explainPending = '';
 		explainInput = '';
 		explainError = '';
 	}
@@ -1936,11 +2068,13 @@
 												title={
 													!settings.aiApiKey
 														? 'Add your DeepSeek API key in Settings → AI'
-														: undefined
+														: explainedTaskIds.has(task.id)
+															? 'Open the saved explanation for this task'
+															: 'Have AI explain this task'
 													}
 											>
 												<Sparkles size={13} />
-												Explain task
+												{explainedTaskIds.has(task.id) ? 'Open explanation' : 'Explain task'}
 											</button>
 										</div>
 									</div>
@@ -2316,17 +2450,29 @@
 						AI-assisted walkthrough — ask follow-ups, the full project and task context is kept.
 					</p>
 				</div>
-				<button
-					type="button"
-					class="rounded-lg p-1.5 text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-700"
-					aria-label="Close"
-					onclick={closeExplain}
-				>
-					<X size={18} />
-				</button>
+				<div class="flex shrink-0 items-center gap-1">
+					<button
+						type="button"
+						class="inline-flex items-center gap-1 rounded-lg border border-neutral-200 px-2 py-1.5 text-xs font-medium text-neutral-600 transition-colors hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
+						onclick={newExplanation}
+						disabled={explainBusy}
+						title="Start a new explanation (replaces the saved one)"
+					>
+						<RefreshCw size={13} />
+						New
+					</button>
+					<button
+						type="button"
+						class="rounded-lg p-1.5 text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-700"
+						aria-label="Close"
+						onclick={closeExplain}
+					>
+						<X size={18} />
+					</button>
+				</div>
 			</header>
 
-			<div class="flex-1 space-y-3 overflow-y-auto px-5 py-4">
+			<div class="flex-1 space-y-3 overflow-y-auto px-5 py-4" bind:this={conversationEl}>
 				{#each explainMessages as message, i (i)}
 					{#if message.role === 'assistant'}
 						<div class="flex items-start gap-2.5">
@@ -2336,17 +2482,17 @@
 								<Sparkles size={12} />
 							</span>
 							<div
-								class="max-w-[85%] rounded-xl rounded-tl-sm border border-indigo-100 bg-indigo-50/60 px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-line text-neutral-800"
+								class="min-w-0 max-w-[85%] rounded-xl rounded-tl-sm border border-indigo-100 bg-indigo-50/60 px-3.5 py-2.5"
 							>
-								{message.content}
+								<Markdown text={message.content} />
 							</div>
 						</div>
 					{:else}
 						<div class="flex items-start justify-end gap-2.5">
 							<div
-								class="max-w-[85%] rounded-xl rounded-tr-sm border border-neutral-200 bg-surface px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-line text-neutral-800"
+								class="min-w-0 max-w-[85%] rounded-xl rounded-tr-sm border border-neutral-200 bg-surface px-3.5 py-2.5"
 							>
-								{message.content}
+								<Markdown text={message.content} />
 							</div>
 							<span
 								class="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-lg bg-neutral-100 text-neutral-500"
@@ -2357,7 +2503,23 @@
 					{/if}
 				{/each}
 
-				{#if explainBusy}
+				{#if explainBusy && explainPending}
+					<div class="flex items-start gap-2.5">
+						<span
+							class="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-lg bg-indigo-600 text-white"
+						>
+							<Sparkles size={12} />
+						</span>
+						<div
+							class="min-w-0 max-w-[85%] rounded-xl rounded-tl-sm border border-indigo-100 bg-indigo-50/60 px-3.5 py-2.5"
+						>
+							<Markdown text={explainPending} />
+							<span class="ml-0.5 inline-block w-1.5 animate-pulse bg-indigo-500">
+								&nbsp;
+							</span>
+						</div>
+					</div>
+				{:else if explainBusy}
 					<div class="flex items-start gap-2.5">
 						<span
 							class="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-lg bg-indigo-600 text-white"
@@ -2387,35 +2549,59 @@
 
 			<footer class="border-t border-neutral-100 px-5 py-3">
 				<form
-					class="flex items-center gap-2"
+					class="flex items-end gap-2"
 					onsubmit={(event) => {
 						event.preventDefault();
 						sendFollowUp();
 					}}
 				>
-					<input
-						type="text"
-						placeholder="Ask a follow-up about this task…"
-						class="h-10 w-full rounded-lg border-neutral-300 bg-white px-3 text-sm focus:border-indigo-500 focus:ring-indigo-500"
+					<select
+						class="h-10 w-44 shrink-0 rounded-lg border-neutral-300 bg-white px-2 text-xs font-medium text-neutral-700 focus:border-indigo-500 focus:ring-indigo-500"
+						aria-label="Model"
+						title="Model used to respond in this chat"
+						bind:value={explainModel}
+					>
+						{#if settings.aiModels.length > 0}
+							{#each settings.aiModels as m (m)}
+								<option value={m}>{m}</option>
+							{/each}
+						{:else}
+							<option value={explainModel}>{explainModel}</option>
+						{/if}
+					</select>
+					<textarea
+						rows="1"
+						placeholder="Ask a follow-up about the task"
+						class="max-h-40 min-h-10 w-full resize-none rounded-lg border-neutral-300 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:ring-indigo-500"
 						bind:value={explainInput}
-						disabled={explainBusy}
-					/>
+						onkeydown={(event) => {
+							if (event.key === 'Enter' && !event.shiftKey) {
+								event.preventDefault();
+								sendFollowUp();
+							}
+						}}
+						oninput={(event) => {
+							const el = event.currentTarget;
+							el.style.height = 'auto';
+							el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+						}}
+					></textarea>
 					<button
 						type="submit"
 						class="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-lg bg-indigo-600 px-3.5 text-sm font-medium text-white transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
-						disabled={explainBusy || !explainInput.trim() || !settings.aiApiKey}
+						disabled={!explainInput.trim() || !settings.aiApiKey}
 					>
 						Send
 					</button>
 				</form>
-				<div class="mt-2 flex justify-end">
-					<button
-						type="button"
-						class="rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-xs font-medium text-neutral-600 transition-colors hover:bg-neutral-50"
-						onclick={closeExplain}
-					>
-						Cancel
-					</button>
+				<div class="mt-2 flex items-center justify-between">
+					<p class="text-[11px] text-neutral-400">
+						{#if unansweredCount > 1}
+							{unansweredCount - 1} more question{unansweredCount - 1 === 1 ? '' : 's'} queued
+						{:else}
+							Enter to send · Shift+Enter for a new line
+						{/if}
+					</p>
 				</div>
 			</footer>
 		</div>
