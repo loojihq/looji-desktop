@@ -19,6 +19,7 @@
 		X
 	} from '@lucide/svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+	import UpdateStatus from '$lib/components/UpdateStatus.svelte';
 	import WorkspaceTile from '$lib/components/WorkspaceTile.svelte';
 	import { projectAccents } from '$lib/badges';
 	import {
@@ -523,6 +524,8 @@
 			{/each}
 		</div>
 	</nav>
+
+	<UpdateStatus />
 </aside>
 
 <ConfirmDialog

@@ -25,6 +25,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": "all",
     "icon": [
       "icons/32x32.png",
@@ -33,5 +34,13 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDEwREIzRDQzMzQ3QTdFMjMKUldRamZubzBRejNiRVBnUHRBMUd3K3kxQW5INmpkbzd1U1Fyc1hzMkJ2M2M1WTFwazJES1FWY0kK",
+      "endpoints": [
+        "https://github.com/danielkosgei/workmaster/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

@@ -8,9 +8,15 @@
     "opener:default",
     {
       "identifier": "http:default",
-      "allow": [{ "url": "https://api.deepseek.com/*" }]
+      "allow": [
+        { "url": "https://api.deepseek.com/*" },
+        { "url": "https://api.github.com/*" },
+        { "url": "https://github.com/*" }
+      ]
     },
     "dialog:default",
+    "updater:default",
+    "process:default",
     "fs:default",
     {
       "identifier": "fs:allow-read-dir",
