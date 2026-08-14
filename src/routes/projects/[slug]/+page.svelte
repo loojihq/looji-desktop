@@ -1499,7 +1499,7 @@
 	{/if}
 
 	<div
-		class="mt-6 flex w-fit items-center gap-1 rounded-lg border border-neutral-200 bg-surface p-1 shadow-xs"
+		class="mt-6 flex w-fit max-w-full flex-wrap items-center gap-1 rounded-lg border border-neutral-200 bg-surface p-1 shadow-xs"
 	>
 		<button
 			type="button"
@@ -2682,7 +2682,7 @@
 					<ul class="divide-y divide-neutral-100">
 						{#each roadmapTasks as task (task.id)}
 							<li class="flex items-center gap-3 py-2.5">
-								<div class="w-56 min-w-0">
+								<div class="w-36 min-w-0 sm:w-56">
 									<p class="truncate text-sm font-medium text-neutral-800">{task.title}</p>
 									<p class="text-xs text-neutral-400">{dueLabel(task.due)}</p>
 								</div>
