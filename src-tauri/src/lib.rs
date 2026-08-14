@@ -268,16 +268,25 @@ pub fn run() {
         .setup(|app| {
             // The window is created here instead of tauri.conf.json so we can
             // disable WebView2's "Suggestions" autofill (which may ignore
-            // `autocomplete="off"`) and use a frameless window with a custom,
-            // theme-matched title bar.
-            let _window =
+            // `autocomplete="off"`) and build a custom, theme-matched title bar.
+            let builder =
                 WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                     .title("Workmaster")
                     .inner_size(1600.0, 1000.0)
                     .min_inner_size(1280.0, 720.0)
-                    .decorations(false)
-                    .general_autofill_enabled(false)
-                    .build()?;
+                    .general_autofill_enabled(false);
+
+            // Windows & Linux: fully custom title bar, no native frame at all.
+            // macOS: keep the native traffic lights via the overlay title bar
+            // style - it hides the rest of the native bar, which looks cleaner
+            // than a fully custom frame there.
+            #[cfg(target_os = "macos")]
+            let builder = builder.title_bar_style(tauri::TitleBarStyle::Overlay);
+
+            #[cfg(not(target_os = "macos"))]
+            let builder = builder.decorations(false);
+
+            let _window = builder.build()?;
             Ok(())
         })
         .run(tauri::generate_context!())

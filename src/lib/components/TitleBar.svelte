@@ -1,9 +1,15 @@
 <script lang="ts">
-	import { Copy, Layers, Minus, Square, X } from '@lucide/svelte';
+	import { Copy, Minus, Square, X } from '@lucide/svelte';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import { onMount } from 'svelte';
 
 	const win = getCurrentWindow();
+
+	// macOS keeps the native traffic lights (titleBarStyle: Overlay), so the
+	// custom minimize/maximize/close buttons only apply on Windows & Linux.
+	const isMac = $derived(
+		typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.userAgent)
+	);
 
 	let maximized = $state(false);
 
@@ -53,16 +59,18 @@
 	data-tauri-drag-region="deep"
 	class="flex h-9 w-full select-none items-stretch justify-between text-neutral-500"
 >
-	<div class="flex h-full items-center gap-2 pl-3.5 pr-4">
-		<span
-			class="flex size-4.5 items-center justify-center rounded-md bg-gradient-to-br from-indigo-500 to-indigo-700 shadow-sm shadow-indigo-600/25"
-		>
-			<Layers size={10} strokeWidth={2.5} class="text-white" />
-		</span>
+	<div class="flex h-full items-center gap-2 {isMac ? 'pl-20' : 'pl-3.5'} pr-4">
+		<img
+			src="/app-icon.png"
+			alt="Workmaster"
+			draggable="false"
+			class="size-4.5 rounded-[5px]"
+		/>
 		<span class="text-[11px] font-semibold tracking-tight text-neutral-600">Workmaster</span>
 	</div>
 
-	<div class="flex h-full items-stretch">
+	{#if !isMac}
+		<div class="flex h-full items-stretch">
 		<button
 			type="button"
 			aria-label="Minimize"
@@ -91,5 +99,6 @@
 		>
 			<X size={14} strokeWidth={2} />
 		</button>
-	</div>
+		</div>
+	{/if}
 </div>

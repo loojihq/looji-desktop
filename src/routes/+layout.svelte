@@ -1,6 +1,5 @@
 	<script lang="ts">
 	import { Menu, X } from '@lucide/svelte';
-	import { Layers } from '@lucide/svelte';
 	import { fade } from 'svelte/transition';
 	import './layout.css';
 	import ContextMenu from '$lib/components/ContextMenu.svelte';
@@ -84,11 +83,12 @@
 					</div>
 				{:else if !status.ready}
 					<div transition:fade={{ duration: 200 }} class="flex flex-col items-center justify-center py-32">
-						<span
-							class="flex size-14 items-center justify-center rounded-2xl bg-gradient-to-br from-[#6366f1] to-[#4338ca] text-white shadow-lg shadow-indigo-600/25"
-						>
-							<Layers size={26} strokeWidth={2.25} />
-						</span>
+						<img
+							src="/app-icon.png"
+							alt="Workmaster"
+							draggable="false"
+							class="size-16 rounded-2xl shadow-lg shadow-neutral-900/15"
+						/>
 						<p class="mt-4 text-sm font-semibold text-neutral-700">Workmaster</p>
 						<p class="mt-1 text-xs text-neutral-400">Loading workspace</p>
 						<div class="mt-4 flex items-center gap-1">
