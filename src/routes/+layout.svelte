@@ -45,36 +45,36 @@
 	<link rel="icon" href="/favicon.png" />
 </svelte:head>
 
-<div class="h-screen overflow-hidden bg-background p-2 sm:p-3">
-	<div class="flex h-full flex-col overflow-hidden rounded-2xl bg-surface shadow-xl shadow-neutral-900/5">
-		{#if isDesktop}
-			<TitleBar />
-		{/if}
+<div class="flex h-screen flex-col overflow-hidden bg-surface">
+	{#if isDesktop}
+		<TitleBar />
+	{/if}
 
-		<div class="flex min-h-0 flex-1">
-			<div class="hidden w-64 shrink-0 lg:block">
-				<Sidebar />
-			</div>
+	<div class="flex min-h-0 flex-1">
+		<div class="hidden w-64 shrink-0 lg:block">
+			<Sidebar />
+		</div>
 
-			<div class="min-w-0 flex-1 overflow-y-auto">
-				<header
-					class="sticky top-0 z-40 flex items-center gap-3 bg-surface/90 px-4 py-3 backdrop-blur lg:hidden"
+		<div class="flex min-w-0 flex-1 flex-col">
+			<header
+				class="flex items-center gap-3 bg-surface/90 px-4 py-3 backdrop-blur lg:hidden"
+			>
+				<button
+					type="button"
+					class="rounded-lg p-1.5 text-neutral-600 hover:bg-neutral-200"
+					aria-label="Open menu"
+					onclick={() => (mobileOpen = true)}
 				>
-					<button
-						type="button"
-						class="rounded-lg p-1.5 text-neutral-600 hover:bg-neutral-200"
-						aria-label="Open menu"
-						onclick={() => (mobileOpen = true)}
-					>
-						<Menu size={20} />
-					</button>
-					<span class="font-semibold tracking-tight text-neutral-900">Workmaster</span>
-				</header>
+					<Menu size={20} />
+				</button>
+				<span class="font-semibold tracking-tight text-neutral-900">Workmaster</span>
+			</header>
 
+			<div class="min-h-0 w-full flex-1 pl-1 pt-1 pb-1 sm:pl-1.5 sm:pt-1.5 sm:pb-1.5">
 				<div
-					class="mx-3 my-4 max-w-7xl rounded-2xl bg-background shadow-sm sm:mx-6 sm:my-6"
+					class="flex h-full flex-col overflow-hidden rounded-l-2xl bg-background shadow-sm"
 				>
-					<main class="px-4 py-6 sm:px-6 lg:px-8">
+					<main class="min-h-0 flex-1 overflow-y-auto px-4 py-6 sm:px-6 lg:px-8">
 				{#if status.error}
 					<div
 						class="rounded-xl border border-red-200 bg-red-50 px-6 py-8 text-sm text-red-700"
@@ -110,6 +110,7 @@
 				{/if}
 				</main>
 				</div>
+				</div>
 			</div>
 		</div>
 	</div>
@@ -134,6 +135,5 @@
 			</div>
 		</div>
 	{/if}
-</div>
 
 <ContextMenu />
