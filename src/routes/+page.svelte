@@ -128,9 +128,10 @@
 			Create a project
 		</a>
 	{:else if addingTask}
-		<form class="flex flex-wrap items-center gap-2" onsubmit={handleQuickAdd}>
+		<form class="flex flex-wrap items-center gap-2" onsubmit={handleQuickAdd} autocomplete="off">
 			<input
 				type="text"
+				autocomplete="off"
 				placeholder="Task title"
 				class="w-52 rounded-lg border-neutral-300 bg-surface text-sm focus:border-indigo-500 focus:ring-indigo-500"
 				bind:value={quickTitle}

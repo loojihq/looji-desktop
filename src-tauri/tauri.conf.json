@@ -10,15 +10,6 @@
     "frontendDist": "../build"
   },
   "app": {
-    "windows": [
-      {
-        "title": "Workmaster",
-        "width": 1600,
-        "height": 1000,
-        "minWidth": 1280,
-        "minHeight": 720
-      }
-    ],
     "security": {
       "csp": null
     }

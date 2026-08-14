@@ -1,3 +1,4 @@
+use tauri::{WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_sql::{Migration, MigrationKind};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -264,6 +265,21 @@ pub fn run() {
                 .add_migrations("sqlite:workmaster.db", migrations)
                 .build(),
         )
+        .setup(|app| {
+            // The window is created here instead of tauri.conf.json so we can
+            // disable WebView2's "Suggestions" autofill (which may ignore
+            // `autocomplete="off"`) and use a frameless window with a custom,
+            // theme-matched title bar.
+            let _window =
+                WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+                    .title("Workmaster")
+                    .inner_size(1600.0, 1000.0)
+                    .min_inner_size(1280.0, 720.0)
+                    .decorations(false)
+                    .general_autofill_enabled(false)
+                    .build()?;
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -1,14 +1,22 @@
-<script lang="ts">
+	<script lang="ts">
 	import { Menu, X } from '@lucide/svelte';
 	import { Layers } from '@lucide/svelte';
 	import { fade } from 'svelte/transition';
 	import './layout.css';
+	import ContextMenu from '$lib/components/ContextMenu.svelte';
 	import Sidebar from '$lib/components/Sidebar.svelte';
+	import TitleBar from '$lib/components/TitleBar.svelte';
 	import { applyTheme, initStore, runAutomations, status } from '$lib/store.svelte';
 
 	let { children } = $props();
 
 	let mobileOpen = $state(false);
+
+	// Only the desktop shell gets the custom title bar; the plain browser (dev
+	// preview) keeps the native window chrome and no extra top padding.
+	const isDesktop = $derived(
+		typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+	);
 
 	$effect(() => {
 		initStore();
@@ -37,9 +45,73 @@
 	<link rel="icon" href="/favicon.png" />
 </svelte:head>
 
-<div class="min-h-screen">
-	<div class="hidden lg:fixed lg:inset-y-0 lg:z-30 lg:block lg:w-64">
-		<Sidebar />
+<div class="h-screen overflow-hidden bg-background p-2 sm:p-3">
+	<div class="flex h-full flex-col overflow-hidden rounded-2xl bg-surface shadow-xl shadow-neutral-900/5">
+		{#if isDesktop}
+			<TitleBar />
+		{/if}
+
+		<div class="flex min-h-0 flex-1">
+			<div class="hidden w-64 shrink-0 lg:block">
+				<Sidebar />
+			</div>
+
+			<div class="min-w-0 flex-1 overflow-y-auto">
+				<header
+					class="sticky top-0 z-40 flex items-center gap-3 bg-surface/90 px-4 py-3 backdrop-blur lg:hidden"
+				>
+					<button
+						type="button"
+						class="rounded-lg p-1.5 text-neutral-600 hover:bg-neutral-200"
+						aria-label="Open menu"
+						onclick={() => (mobileOpen = true)}
+					>
+						<Menu size={20} />
+					</button>
+					<span class="font-semibold tracking-tight text-neutral-900">Workmaster</span>
+				</header>
+
+				<div
+					class="mx-3 my-4 max-w-7xl rounded-2xl bg-background shadow-sm sm:mx-6 sm:my-6"
+				>
+					<main class="px-4 py-6 sm:px-6 lg:px-8">
+				{#if status.error}
+					<div
+						class="rounded-xl border border-red-200 bg-red-50 px-6 py-8 text-sm text-red-700"
+					>
+						<p class="font-semibold">Could not open the database</p>
+						<p class="mt-1">{status.error}</p>
+					</div>
+				{:else if !status.ready}
+					<div transition:fade={{ duration: 200 }} class="flex flex-col items-center justify-center py-32">
+						<span
+							class="flex size-14 items-center justify-center rounded-2xl bg-gradient-to-br from-[#6366f1] to-[#4338ca] text-white shadow-lg shadow-indigo-600/25"
+						>
+							<Layers size={26} strokeWidth={2.25} />
+						</span>
+						<p class="mt-4 text-sm font-semibold text-neutral-700">Workmaster</p>
+						<p class="mt-1 text-xs text-neutral-400">Loading workspace</p>
+						<div class="mt-4 flex items-center gap-1">
+							<span class="size-1.5 animate-pulse rounded-full bg-indigo-400"></span>
+							<span
+								class="size-1.5 animate-pulse rounded-full bg-indigo-500"
+								style="animation-delay: 150ms"
+							></span>
+							<span
+								class="size-1.5 animate-pulse rounded-full bg-indigo-600"
+								style="animation-delay: 300ms"
+							></span>
+						</div>
+					</div>
+				{:else}
+					<div transition:fade={{ duration: 250 }}>
+						{@render children()}
+					</div>
+				{/if}
+				</main>
+				</div>
+			</div>
+		</div>
 	</div>
 
 	{#if mobileOpen}
@@ -62,56 +134,6 @@
 			</div>
 		</div>
 	{/if}
-
-	<div class="lg:pl-64">
-		<header
-			class="sticky top-0 z-40 flex items-center gap-3 border-b border-neutral-200 bg-neutral-100/90 px-4 py-3 backdrop-blur lg:hidden"
-		>
-			<button
-				type="button"
-				class="rounded-lg p-1.5 text-neutral-600 hover:bg-neutral-200"
-				aria-label="Open menu"
-				onclick={() => (mobileOpen = true)}
-			>
-				<Menu size={20} />
-			</button>
-			<span class="font-semibold tracking-tight text-neutral-900">Workmaster</span>
-		</header>
-
-		<main class="mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-10">
-			{#if status.error}
-				<div
-					class="rounded-xl border border-red-200 bg-red-50 px-6 py-8 text-sm text-red-700"
-				>
-					<p class="font-semibold">Could not open the database</p>
-					<p class="mt-1">{status.error}</p>
-				</div>
-			{:else if !status.ready}
-				<div transition:fade={{ duration: 200 }} class="flex flex-col items-center justify-center py-32">
-					<span
-						class="flex size-14 items-center justify-center rounded-2xl bg-gradient-to-br from-[#6366f1] to-[#4338ca] text-white shadow-lg shadow-indigo-600/25"
-					>
-						<Layers size={26} strokeWidth={2.25} />
-					</span>
-					<p class="mt-4 text-sm font-semibold text-neutral-700">Workmaster</p>
-					<p class="mt-1 text-xs text-neutral-400">Loading workspace</p>
-					<div class="mt-4 flex items-center gap-1">
-						<span class="size-1.5 animate-pulse rounded-full bg-indigo-400"></span>
-						<span
-							class="size-1.5 animate-pulse rounded-full bg-indigo-500"
-							style="animation-delay: 150ms"
-						></span>
-						<span
-							class="size-1.5 animate-pulse rounded-full bg-indigo-600"
-							style="animation-delay: 300ms"
-						></span>
-					</div>
-				</div>
-			{:else}
-				<div transition:fade={{ duration: 250 }}>
-					{@render children()}
-				</div>
-			{/if}
-		</main>
-	</div>
 </div>
+
+<ContextMenu />

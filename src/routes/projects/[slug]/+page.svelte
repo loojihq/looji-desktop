@@ -1551,6 +1551,7 @@
 		{#if projectEditOpen}
 		<form
 			onsubmit={handleProjectSave}
+			autocomplete="off"
 			class="mt-4 rounded-xl border border-indigo-200 bg-indigo-50/60 p-4 shadow-xs"
 		>
 			<div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -1561,6 +1562,7 @@
 					<input
 						id="proj-name"
 						type="text"
+						autocomplete="off"
 						class="w-full rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
 						bind:value={projName}
 						required
@@ -1646,6 +1648,7 @@
 						<input
 							id="proj-repo"
 							type="text"
+							autocomplete="off"
 							placeholder="C:\repo or \\wsl$\Ubuntu\home\you\repo"
 							class="w-full rounded-lg border-neutral-300 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:ring-indigo-500"
 							bind:value={projRepoPath}
@@ -1707,6 +1710,7 @@
 	{#if editTask}
 		<form
 			onsubmit={handleTaskSave}
+			autocomplete="off"
 			class="mt-4 rounded-xl border border-indigo-200 bg-indigo-50/60 p-4 shadow-xs"
 		>
 			<div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -1715,6 +1719,7 @@
 					<input
 						id="edit-title"
 						type="text"
+						autocomplete="off"
 						class="w-full rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
 						bind:value={editTitle}
 						required
@@ -1778,6 +1783,7 @@
 					<input
 						id="edit-tags"
 						type="text"
+						autocomplete="off"
 						placeholder="e.g. frontend, bug"
 						class="w-full rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
 						bind:value={editTags}
@@ -1928,6 +1934,7 @@
 									</span>
 									<input
 										type="text"
+										autocomplete="off"
 										list="ai-specialties"
 										placeholder="Specialty (optional)"
 										class="w-full min-w-40 flex-1 rounded-lg border-neutral-300 bg-surface px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:opacity-40"
@@ -2070,6 +2077,7 @@
 									<span class="shrink-0 text-indigo-500">•</span>
 									<input
 										type="text"
+										autocomplete="off"
 										class="w-full rounded-lg border-neutral-300 bg-surface px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:ring-indigo-500"
 										bind:value={aiDraft.userStories[i]}
 									/>
@@ -2087,6 +2095,7 @@
 						<div class="mt-2 flex items-center gap-2">
 							<input
 								type="text"
+								autocomplete="off"
 								placeholder="Add a user story…"
 								class="w-full rounded-lg border-neutral-300 bg-surface px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:ring-indigo-500"
 								bind:value={newStory}
@@ -2124,6 +2133,7 @@
 									<div class="flex flex-wrap items-center gap-2">
 										<input
 											type="text"
+											autocomplete="off"
 											class="min-w-40 flex-1 rounded-lg border-neutral-300 bg-surface px-2.5 py-1.5 text-sm font-medium focus:border-indigo-500 focus:ring-indigo-500"
 											bind:value={task.title}
 										/>
@@ -2168,6 +2178,7 @@
 									</div>
 									<input
 										type="text"
+										autocomplete="off"
 										placeholder="Description"
 										class="mt-1.5 w-full rounded-lg border-neutral-300 bg-surface px-2.5 py-1.5 text-sm text-neutral-500 focus:border-indigo-500 focus:ring-indigo-500"
 										bind:value={task.description}
@@ -2235,6 +2246,7 @@
 				</span>
 				<input
 					type="search"
+					autocomplete="off"
 					placeholder="Search tasks"
 					class="w-full rounded-lg border-neutral-300 bg-surface py-2 pr-3 pl-9 text-sm focus:border-indigo-500 focus:ring-indigo-500"
 					bind:value={boardQuery}
@@ -2504,9 +2516,14 @@
 					</div>
 
 					{#if addingStatus === status}
-						<form class="mt-2 space-y-2" onsubmit={() => handleAdd(status)}>
+						<form
+							class="mt-2 space-y-2"
+							onsubmit={() => handleAdd(status)}
+							autocomplete="off"
+						>
 							<input
 								type="text"
+								autocomplete="off"
 								placeholder="Task title"
 								class="w-full rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
 								bind:value={newTitle}

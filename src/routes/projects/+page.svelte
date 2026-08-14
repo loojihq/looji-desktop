@@ -134,6 +134,7 @@
 {#if formOpen}
 	<form
 		onsubmit={handleSave}
+		autocomplete="off"
 		class="mb-6 rounded-xl border border-indigo-200 bg-indigo-50/60 p-4 shadow-xs"
 	>
 		<div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -144,6 +145,7 @@
 				<input
 					id="project-name"
 					type="text"
+					autocomplete="off"
 					placeholder="e.g. iOS redesign"
 					class="w-full rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
 					bind:value={formName}
@@ -229,6 +231,7 @@
 		</span>
 		<input
 			type="search"
+			autocomplete="off"
 			placeholder="Search projects"
 			class="w-full rounded-lg border-neutral-300 py-2 pr-3 pl-9 text-sm focus:border-indigo-500 focus:ring-indigo-500"
 			bind:value={query}

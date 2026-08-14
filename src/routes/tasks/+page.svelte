@@ -142,6 +142,7 @@
 	{#if editTarget}
 		<form
 			onsubmit={handleEditSave}
+			autocomplete="off"
 			class="rounded-xl border border-indigo-200 bg-indigo-50/60 p-4 shadow-xs"
 		>
 			<div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -150,6 +151,7 @@
 					<input
 						id="edit-title"
 						type="text"
+						autocomplete="off"
 						class="w-full rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
 						bind:value={editTitle}
 						required
@@ -224,6 +226,7 @@
 					<input
 						id="edit-tags"
 						type="text"
+						autocomplete="off"
 						placeholder="e.g. frontend, bug"
 						class="w-full rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
 						bind:value={editTags}
@@ -250,7 +253,7 @@
 			</div>
 		</form>
 	{:else}
-		<form class="flex flex-wrap items-center gap-2" onsubmit={handleQuickAdd}>
+		<form class="flex flex-wrap items-center gap-2" onsubmit={handleQuickAdd} autocomplete="off">
 			<div class="relative min-w-64 flex-1">
 				<span
 					class="pointer-events-none absolute inset-y-0 left-3 flex items-center text-neutral-400"
@@ -259,6 +262,7 @@
 				</span>
 				<input
 					type="text"
+					autocomplete="off"
 					placeholder="Add a task"
 					class="w-full rounded-lg border-neutral-300 py-2 pr-3 pl-9 text-sm focus:border-indigo-500 focus:ring-indigo-500"
 					bind:value={newTitle}
@@ -304,6 +308,7 @@
 		</span>
 		<input
 			type="search"
+			autocomplete="off"
 			placeholder="Search tasks"
 			class="w-full rounded-lg border-neutral-300 py-2 pr-3 pl-9 text-sm focus:border-indigo-500 focus:ring-indigo-500"
 			bind:value={query}

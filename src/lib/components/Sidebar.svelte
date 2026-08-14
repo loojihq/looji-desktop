@@ -245,6 +245,7 @@
 										<input
 											type="text"
 											bind:this={renameInput}
+											autocomplete="off"
 											placeholder="Workspace name"
 											class="h-8 min-w-0 flex-1 rounded-lg border-neutral-300 bg-surface px-2 text-sm focus:border-indigo-500 focus:ring-indigo-500"
 											bind:value={renameValue}
@@ -276,6 +277,7 @@
 									<div class="mt-1.5 flex flex-wrap items-center gap-1.5 pl-1.5">
 										<input
 											type="text"
+											autocomplete="off"
 											placeholder="Image URL…"
 											class="h-7 w-36 rounded-lg border-neutral-300 bg-surface px-2 text-xs focus:border-indigo-500 focus:ring-indigo-500"
 											bind:value={renameIcon}
@@ -360,6 +362,7 @@
 									<input
 										type="text"
 										bind:this={createInput}
+										autocomplete="off"
 										placeholder="Workspace name"
 										class="h-8 min-w-0 flex-1 rounded-lg border-neutral-300 bg-surface px-2 text-sm focus:border-indigo-500 focus:ring-indigo-500"
 										bind:value={newName}
@@ -391,6 +394,7 @@
 								<div class="mt-1.5 flex flex-wrap items-center gap-1.5 pl-1.5">
 									<input
 										type="text"
+										autocomplete="off"
 										placeholder="Image URL…"
 										class="h-7 w-36 rounded-lg border-neutral-300 bg-surface px-2 text-xs focus:border-indigo-500 focus:ring-indigo-500"
 										bind:value={newIcon}
