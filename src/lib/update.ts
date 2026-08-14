@@ -4,6 +4,8 @@ import { fetch } from '@tauri-apps/plugin-http';
 /** The GitHub repository that hosts releases. */
 const REPO = 'danielkosgei/workmaster';
 
+const API = `https://api.github.com/repos/${REPO}/releases`;
+
 /** Compares two semver strings (with or without a leading "v"). Returns <0, 0 or >0. */
 export function compareSemver(a: string, b: string): number {
 	const pa = a.replace(/^v/, '').split('.').map(Number);
@@ -20,7 +22,10 @@ export type UpdateCheck = {
 	current: string;
 	latest: string | null;
 	available: boolean;
+	/** Set when the feed could not be checked at all (network, auth, 404). */
 	error?: string;
+	/** True when the repo is reachable but has no published releases yet. */
+	noReleases?: boolean;
 };
 
 /**
@@ -30,24 +35,44 @@ export type UpdateCheck = {
 export async function checkForUpdates(): Promise<UpdateCheck> {
 	const current = await getVersion();
 	try {
-		const response = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
+		// `releases/latest` returns 404 both when the repo is unreachable AND when
+		// there are simply no published releases yet, so on a 404 we fall back to
+		// the full releases list (which returns an empty array with HTTP 200 when
+		// the repo is fine) to tell the two apart.
+		let response = await fetch(`${API}/latest`, {
 			headers: {
 				Accept: 'application/vnd.github+json',
 				'User-Agent': 'workmaster'
 			}
 		});
-		if (!response.ok) {
-			return {
-				current,
-				latest: null,
-				available: false,
-				error: `Update check failed (HTTP ${response.status}).`
-			};
+		let data: { tag_name?: string } | null = null;
+		if (response.ok) {
+			data = (await response.json()) as { tag_name?: string };
+		} else if (response.status === 404) {
+			response = await fetch(API, {
+				headers: {
+					Accept: 'application/vnd.github+json',
+					'User-Agent': 'workmaster'
+				}
+			});
+			if (response.ok) {
+				const list = (await response.json()) as { tag_name?: string }[];
+				if (list.length === 0) {
+					return { current, latest: null, available: false, noReleases: true };
+				}
+				data = list[0];
+			}
 		}
-		const data = (await response.json()) as { tag_name?: string };
-		const latest = (data.tag_name ?? '').replace(/^v/, '');
+		if (!response.ok) {
+			const message =
+				response.status === 404
+					? 'Release feed not reachable (HTTP 404) - the repository may be private or renamed.'
+					: `Update check failed (HTTP ${response.status}).`;
+			return { current, latest: null, available: false, error: message };
+		}
+		const latest = (data?.tag_name ?? '').replace(/^v/, '');
 		if (!latest) {
-			return { current, latest: null, available: false, error: 'No releases found.' };
+			return { current, latest: null, available: false, noReleases: true };
 		}
 		return { current, latest, available: compareSemver(latest, current) > 0 };
 	} catch (err) {

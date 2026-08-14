@@ -62,7 +62,9 @@
 			? `Update to v${result.latest}`
 			: result?.error
 				? `${result.error} Click to try again.`
-				: 'Check for updates'}
+				: result?.noReleases
+					? 'No releases published yet. Click to check again.'
+					: 'Check for updates'}
 		class="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-neutral-100"
 	>
 		{#if checking}
@@ -71,6 +73,8 @@
 			<span class="size-2 shrink-0 rounded-full bg-indigo-500"></span>
 		{:else if result?.error}
 			<TriangleAlert size={13} class="shrink-0 text-amber-500" />
+		{:else if result?.noReleases}
+			<span class="size-2 shrink-0 rounded-full bg-neutral-300"></span>
 		{:else}
 			<CheckCircle2 size={13} class="shrink-0 text-emerald-500" />
 		{/if}
@@ -84,6 +88,8 @@
 				{result.latest} available
 			{:else if result?.error}
 				Check failed
+			{:else if result?.noReleases}
+				No releases yet
 			{:else}
 				Up to date
 			{/if}
@@ -91,6 +97,8 @@
 	</button>
 	{#if installError}
 		<p class="px-2 pt-1 text-[10px] text-red-600">{installError}</p>
+	{:else if result?.error}
+		<p class="px-2 pt-1 text-[10px] text-amber-600">{result.error}</p>
 	{/if}
 </div>
 
