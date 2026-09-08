@@ -117,6 +117,9 @@ describe('request building per provider kind', () => {
 		expect(url).toBe('https://api.anthropic.com/v1/messages');
 		expect(init.headers['x-api-key']).toBe('sk-test');
 		expect(init.headers['anthropic-version']).toBeTruthy();
+		// Required or Anthropic rejects the request with a 401 CORS error,
+		// since the Tauri webview otherwise looks like a browser origin to it.
+		expect(init.headers['anthropic-dangerous-direct-browser-access']).toBe('true');
 		expect(init.headers.Authorization).toBeUndefined();
 		const body = JSON.parse(init.body as string);
 		expect(body.max_tokens).toBeGreaterThan(0);
@@ -136,6 +139,7 @@ describe('fetchProviderModels', () => {
 		await fetchProviderModels(makeProvider({ kind: 'anthropic', apiKey: 'ak-1' }));
 		const [, init] = fetchMock.mock.calls[0] as [string, RequestInit & { headers: Record<string, string> }];
 		expect(init.headers['x-api-key']).toBe('ak-1');
+		expect(init.headers['anthropic-dangerous-direct-browser-access']).toBe('true');
 	});
 });
 
