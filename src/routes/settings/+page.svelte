@@ -441,8 +441,7 @@
 											{#if claudeCodeDetecting}
 												Checking…
 											{:else if claudeCodeDetection?.cliAvailable}
-												Claude Code found. Make sure you're signed in - run
-												<code class="text-xs">claude auth login</code> if you haven't.
+												Claude Code CLI found.
 											{:else if claudeCodeDetection && !claudeCodeDetection.nodeAvailable}
 												Node.js is required first.
 												<a
