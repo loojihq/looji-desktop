@@ -981,8 +981,13 @@
 	let aiNeedsProvider = $state(false);
 	let aiStatus = $state<AiDraftStatus | null>(null);
 	let aiRepoEnabled = $state(true);
+	let aiGenerateAbort = $state<AbortController | null>(null);
 	let newStory = $state('');
-	let draftLoaded = $state(false);
+	let regenerateConfirmOpen = $state(false);
+	/** The project id the AI draft state was last loaded for, or null before
+	 *  the first load. Tracking the id (not a bare boolean) is what lets the
+	 *  effect above notice a project switch and reload. */
+	let draftLoaded = $state<string | null>(null);
 
 	const DRAFT_PAGE_SIZE = 15;
 	let draftPage = $state(1);
@@ -999,10 +1004,25 @@
 			: []
 	);
 
-	// Resume a previously saved draft when the project opens.
+	// Resume a previously saved draft when the project opens - and re-resume
+	// (from a clean slate) whenever the project itself changes, since this
+	// component instance is reused across /projects/[slug] navigations rather
+	// than remounted. Without this, switching projects kept the previous
+	// project's in-progress draft in memory, and the debounced auto-save
+	// below could then write it into the new project's saved-draft row.
 	$effect(() => {
-		if (!project || !status.ready || draftLoaded) return;
-		draftLoaded = true;
+		if (!project || !status.ready || draftLoaded === project.id) return;
+		draftLoaded = project.id;
+		cancelAiGenerate();
+		aiDraft = null;
+		aiDesires = '';
+		aiDue = '';
+		aiSpecialties = [];
+		aiIncluded = {};
+		aiSpecialty = {};
+		aiOpen = false;
+		aiError = '';
+		aiPublished = false;
 		loadSavedDraft(project.id);
 	});
 
@@ -1020,7 +1040,14 @@
 
 	// Auto-save the draft (debounced) so it survives navigation and app closes.
 	$effect(() => {
-		if (!project || (!aiDraft && !aiDesires.trim())) return;
+		if (!project) return;
+		// Force a deep read of the draft so nested edits (a task's title, an
+		// added/removed story) also count as a change to save. $effect only
+		// tracks the specific properties it reads during this run - merely
+		// holding the top-level `aiDraft` reference below wouldn't notice a
+		// mutation two levels down, since that never re-reads it.
+		void (aiDraft && JSON.stringify(aiDraft));
+		if (!aiDraft && !aiDesires.trim()) return;
 		const payload: SavedAiDraft = {
 			draft: aiDraft,
 			desires: aiDesires,
@@ -1067,10 +1094,16 @@
 	}
 
 	function closeAiPanel() {
+		// Just hides the panel - the draft (aiDraft/aiDesires/etc.) is left
+		// exactly as it is, since it already mirrors what's saved to disk
+		// (via the auto-save effect) and reopening should show it again
+		// unchanged. Discarding it here previously nulled aiDraft while
+		// leaving aiDesires populated, which the auto-save effect then wrote
+		// out as "draft: null" over a real saved draft.
 		aiOpen = false;
-		aiDraft = null;
 		aiError = '';
 		aiPublished = false;
+		cancelAiGenerate();
 	}
 
 	async function suggestSpecialtiesNow() {
@@ -1103,6 +1136,27 @@
 		};
 	}
 
+	/** Cancels an in-flight generation, if any. Safe to call unconditionally. */
+	function cancelAiGenerate() {
+		aiGenerateAbort?.abort();
+	}
+
+	/** "Regenerate plan" replaces aiDraft outright (unlike "Refine with AI",
+	 *  which asks the model to revise it in place) - confirm first so an
+	 *  edited draft isn't silently thrown away. */
+	function requestRegenerate() {
+		if (aiDraft) {
+			regenerateConfirmOpen = true;
+		} else {
+			handleAiGenerate(false);
+		}
+	}
+
+	function confirmRegenerate() {
+		regenerateConfirmOpen = false;
+		handleAiGenerate(false);
+	}
+
 	async function handleAiGenerate(refine = false) {
 		if (!project) return;
 		const provider = activeAiProvider();
@@ -1118,6 +1172,8 @@
 		aiError = '';
 		aiPublished = false;
 		aiStatus = null;
+		const abort = new AbortController();
+		aiGenerateAbort = abort;
 		try {
 			const repo = await ensureProjectRepoContext();
 			const draft = await generateAiDraft({
@@ -1133,7 +1189,8 @@
 				provider,
 				currentDraft: refine && aiDraft ? aiDraft : undefined,
 				repo: repo ?? undefined,
-				onStatus: (s) => (aiStatus = s)
+				onStatus: (s) => (aiStatus = s),
+				signal: abort.signal
 			});
 			if (draft.tasks.length === 0 && !draft.spec && draft.userStories.length === 0) {
 				aiError = 'The AI returned an empty plan. Try rephrasing your desires.';
@@ -1143,10 +1200,15 @@
 				persistDraftNow();
 			}
 		} catch (err) {
+			if (abort.signal.aborted) {
+				aiStatus = null;
+				return;
+			}
 			aiError = err instanceof Error ? err.message : String(err);
 			aiStatus = null;
 		} finally {
 			aiLoading = false;
+			if (aiGenerateAbort === abort) aiGenerateAbort = null;
 		}
 	}
 
@@ -2020,7 +2082,7 @@
 					<button
 						type="button"
 						class="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
-						onclick={() => handleAiGenerate(false)}
+						onclick={requestRegenerate}
 						disabled={aiLoading || aiPublishing}
 					>
 						<Sparkles size={15} />
@@ -2073,7 +2135,7 @@
 								style="animation-delay: 300ms"
 							></span>
 						</span>
-						<div class="min-w-0">
+						<div class="min-w-0 flex-1">
 							<p class="text-sm font-medium text-indigo-700">
 								{aiStatus?.message ?? 'Working…'}
 							</p>
@@ -2086,6 +2148,13 @@
 								</div>
 							{/if}
 						</div>
+						<button
+							type="button"
+							class="shrink-0 rounded-lg border border-indigo-200 bg-white px-3 py-1.5 text-xs font-medium text-indigo-700 transition-colors hover:bg-indigo-50"
+							onclick={cancelAiGenerate}
+						>
+							Stop
+						</button>
 					</div>
 				{/if}
 			{/if}
@@ -2891,6 +2960,14 @@
 		deleteProjectOpen = false;
 		deleteError = '';
 	}}
+/>
+<ConfirmDialog
+	open={regenerateConfirmOpen}
+	title="Regenerate plan?"
+	message={'This replaces the current draft - including any manual edits - with a brand new plan. Use "Refine with AI" instead to revise this draft in place.'}
+	confirmLabel="Regenerate plan"
+	onConfirm={confirmRegenerate}
+	onCancel={() => (regenerateConfirmOpen = false)}
 />
 
 {#if explainTarget}
