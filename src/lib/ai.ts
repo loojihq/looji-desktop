@@ -179,7 +179,14 @@ function anthropicHeaders(provider: AiProvider): Record<string, string> {
 	return {
 		'Content-Type': 'application/json',
 		'x-api-key': provider.apiKey,
-		'anthropic-version': ANTHROPIC_VERSION
+		'anthropic-version': ANTHROPIC_VERSION,
+		// The Tauri webview looks like a browser origin to Anthropic's CORS
+		// layer, which otherwise rejects direct browser-originated requests
+		// with a 401 (a deliberate guard against shipping API keys in
+		// client-side web apps). This app already stores the key locally on
+		// the user's own device rather than in a public web page, so that
+		// guard doesn't apply here - this header is the documented opt-out.
+		'anthropic-dangerous-direct-browser-access': 'true'
 	};
 }
 
