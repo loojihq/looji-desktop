@@ -57,6 +57,23 @@
           "args": ["--version"]
         },
         {
+          "name": "claude-version-check",
+          "cmd": "claude",
+          "sidecar": false,
+          "args": ["--version"]
+        },
+        {
+          "name": "install-claude-code-cli",
+          "cmd": "npm",
+          "sidecar": false,
+          "args": ["install", "-g", "@anthropic-ai/claude-code"]
+        }
+      ]
+    },
+    {
+      "identifier": "shell:allow-spawn",
+      "allow": [
+        {
           "name": "claude-code-acp-bridge",
           "cmd": "npx",
           "sidecar": false,

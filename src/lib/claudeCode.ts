@@ -140,25 +140,51 @@ export function extractUpdateText(message: JsonRpcMessage): string | null {
 // Detection
 // ---------------------------------------------------------------------------
 
-export type ClaudeCodeDetection = { available: boolean; reason?: string };
+export type ClaudeCodeDetection = {
+	nodeAvailable: boolean;
+	/** Only meaningful when nodeAvailable is true. */
+	cliAvailable: boolean;
+};
+
+async function checkCommand(name: string, args: string[]): Promise<boolean> {
+	try {
+		const output = await Command.create(name, args).execute();
+		return output.code === 0;
+	} catch {
+		return false;
+	}
+}
 
 /**
- * Best-effort check that Node.js resolves on PATH, for a fast/friendly error
- * in the settings UI. This is not a guarantee the bridge will actually work
- * (the Claude Code CLI itself, and being signed in, aren't checked here) -
- * the real test is attempting a session via testClaudeCodeConnection().
+ * Best-effort PATH checks for Node.js and the Claude Code CLI, for a fast
+ * settings-page status. Not a guarantee the bridge will actually work (being
+ * signed in isn't checked here - the real test is attempting a session via
+ * testProviderConnection()).
  */
 export async function detectClaudeCode(): Promise<ClaudeCodeDetection> {
-	try {
-		const output = await Command.create('node-version-check', ['--version']).execute();
-		if (output.code === 0) return { available: true };
-		return { available: false, reason: 'Node.js was found but exited with an error.' };
-	} catch {
-		return {
-			available: false,
-			reason:
-				'Node.js was not found on your PATH. Install Node.js 20+, then run "npm install -g @anthropic-ai/claude-code" and "claude auth login".'
-		};
+	const nodeAvailable = await checkCommand('node-version-check', ['--version']);
+	if (!nodeAvailable) return { nodeAvailable: false, cliAvailable: false };
+	const cliAvailable = await checkCommand('claude-version-check', ['--version']);
+	return { nodeAvailable: true, cliAvailable };
+}
+
+export class ClaudeCodeInstallError extends Error {}
+
+/**
+ * Installs the Claude Code CLI globally via npm, so the user doesn't have to
+ * run that command themselves. Requires Node.js to already be present (not
+ * checked here - call after detectClaudeCode() confirms nodeAvailable).
+ * Signing in (`claude auth login`) still needs the user - it's an
+ * interactive OAuth flow this app can't drive on their behalf.
+ */
+export async function installClaudeCodeCli(): Promise<void> {
+	const output = await Command.create('install-claude-code-cli', [
+		'install',
+		'-g',
+		'@anthropic-ai/claude-code'
+	]).execute();
+	if (output.code !== 0) {
+		throw new ClaudeCodeInstallError(output.stderr.trim() || 'npm install failed.');
 	}
 }
 

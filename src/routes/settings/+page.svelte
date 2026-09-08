@@ -3,7 +3,7 @@
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import Select from '$lib/components/Select.svelte';
 	import { PROVIDER_PRESETS, fetchProviderModels, testProviderConnection } from '$lib/ai';
-	import { detectClaudeCode, type ClaudeCodeDetection } from '$lib/claudeCode';
+	import { detectClaudeCode, installClaudeCodeCli, type ClaudeCodeDetection } from '$lib/claudeCode';
 	import { settings, updateSetting } from '$lib/store.svelte';
 	import type { AiProvider, AiProviderKind } from '$lib/types';
 
@@ -40,6 +40,8 @@
 
 	let claudeCodeDetection = $state<ClaudeCodeDetection | null>(null);
 	let claudeCodeDetecting = $state(false);
+	let claudeCodeInstalling = $state(false);
+	let claudeCodeInstallError = $state('');
 
 	async function runClaudeCodeDetection() {
 		claudeCodeDetecting = true;
@@ -47,6 +49,19 @@
 			claudeCodeDetection = await detectClaudeCode();
 		} finally {
 			claudeCodeDetecting = false;
+		}
+	}
+
+	async function installClaudeCode() {
+		claudeCodeInstalling = true;
+		claudeCodeInstallError = '';
+		try {
+			await installClaudeCodeCli();
+			await runClaudeCodeDetection();
+		} catch (err) {
+			claudeCodeInstallError = err instanceof Error ? err.message : String(err);
+		} finally {
+			claudeCodeInstalling = false;
 		}
 	}
 
@@ -76,6 +91,7 @@
 		formTestResult = null;
 		modelsFetchedFor = '';
 		claudeCodeDetection = null;
+		claudeCodeInstallError = '';
 	}
 
 	function openAddProvider() {
@@ -101,6 +117,7 @@
 		// immediately re-fetch until something actually changes.
 		modelsFetchedFor = draftFingerprint();
 		claudeCodeDetection = null;
+		claudeCodeInstallError = '';
 		providerFormOpen = true;
 	}
 
@@ -411,36 +428,51 @@
 							</div>
 							{#if formKind === 'claude-code'}
 								<div class="sm:col-span-2">
-									<p class="mb-1 text-xs font-medium text-neutral-600">Local setup</p>
 									<div
-										class="rounded-lg border px-3 py-2.5 text-sm {claudeCodeDetecting
+										class="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5 text-sm {claudeCodeDetecting
 											? 'border-neutral-200 bg-white text-neutral-500'
-											: claudeCodeDetection?.available
+											: claudeCodeDetection?.cliAvailable
 												? 'border-emerald-200 bg-emerald-50 text-emerald-700'
 												: claudeCodeDetection
 													? 'border-amber-200 bg-amber-50 text-amber-700'
 													: 'border-neutral-200 bg-white text-neutral-500'}"
 									>
-										{#if claudeCodeDetecting}
-											Checking for Node.js…
-										{:else if claudeCodeDetection?.available}
-											Node.js found. Looji will spawn Claude Code's ACP bridge (<code
-												class="text-xs">npx @agentclientprotocol/claude-agent-acp</code
-											>) the first time you use this provider - that first run may take a
-											moment while it downloads.
-										{:else if claudeCodeDetection}
-											{claudeCodeDetection.reason}
-										{:else}
-											Not checked yet.
+										<span>
+											{#if claudeCodeDetecting}
+												Checking…
+											{:else if claudeCodeDetection?.cliAvailable}
+												Claude Code found. Make sure you're signed in - run
+												<code class="text-xs">claude auth login</code> if you haven't.
+											{:else if claudeCodeDetection && !claudeCodeDetection.nodeAvailable}
+												Node.js is required first.
+												<a
+													href="https://nodejs.org"
+													target="_blank"
+													rel="noreferrer"
+													class="font-medium underline">Install Node.js</a
+												>, then come back here.
+											{:else if claudeCodeDetection}
+												Claude Code isn't installed yet.
+											{:else}
+												Not checked yet.
+											{/if}
+										</span>
+										{#if claudeCodeDetection?.nodeAvailable && !claudeCodeDetection.cliAvailable}
+											<button
+												type="button"
+												onclick={installClaudeCode}
+												disabled={claudeCodeInstalling}
+												class="shrink-0 rounded-lg border border-amber-300 bg-white px-2.5 py-1.5 text-xs font-medium text-amber-800 transition-colors hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+											>
+												{claudeCodeInstalling ? 'Installing…' : 'Install Claude Code'}
+											</button>
 										{/if}
 									</div>
+									{#if claudeCodeInstallError}
+										<p class="mt-1.5 text-xs text-red-600">{claudeCodeInstallError}</p>
+									{/if}
 									<p class="mt-1.5 text-xs text-neutral-400">
-										Requires Node.js 20+, the Claude Code CLI (<code class="text-xs"
-											>npm install -g @anthropic-ai/claude-code</code
-										>) installed separately, and being signed in (<code class="text-xs"
-											>claude auth login</code
-										>) with your Claude Pro/Max subscription - not an API key. Uses whichever
-										model Claude Code defaults to.
+										Uses your Claude Pro/Max subscription, not an API key.
 									</p>
 								</div>
 							{:else}
