@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addWorkingHours } from './utils';
+import { addWorkingHours, slugify, uniqueSlug } from './utils';
 
 // Monday 2024-01-01 09:00 local time. Working hours: 09:00-17:00 (540-1020),
 // Mon-Fri (1-5), matching the app's defaults.
@@ -75,5 +75,36 @@ describe('addWorkingHours', () => {
 		// Tuesday 9-10am.
 		const result = addWorkingHours(MON_9AM, 1, WORK_START, WORK_END, [2, 4]);
 		expect(result.getTime()).toBe(at(2024, 0, 2, 10, 0).getTime());
+	});
+});
+
+describe('uniqueSlug', () => {
+	it('returns the plain slug when it is not taken', () => {
+		expect(uniqueSlug('Website Redesign', [])).toBe('website-redesign');
+	});
+
+	it('appends -2, -3, … until it finds a free slug', () => {
+		expect(uniqueSlug('API v2', ['api-v2'])).toBe('api-v2-2');
+		expect(uniqueSlug('API v2', ['api-v2', 'api-v2-2'])).toBe('api-v2-3');
+	});
+
+	it('disambiguates two differently-punctuated names that slugify identically', () => {
+		const first = uniqueSlug('API v2', []);
+		const second = uniqueSlug('API, v2', [first]);
+		expect(first).toBe('api-v2');
+		expect(second).not.toBe(first);
+		expect(second).toBe('api-v2-2');
+	});
+
+	it('falls back to "project" for a name with no sluggable characters', () => {
+		expect(uniqueSlug('***', [])).toBe('project');
+		expect(uniqueSlug('***', ['project'])).toBe('project-2');
+	});
+});
+
+describe('slugify', () => {
+	it('lowercases and hyphenates, trimming leading/trailing separators', () => {
+		expect(slugify('  Hello World!  ')).toBe('hello-world');
+		expect(slugify('A/B Testing')).toBe('a-b-testing');
 	});
 });
