@@ -24,6 +24,7 @@
 	} from '$lib/repo';
 	import { projectAccents, priorityStyles, projectStatusStyles, taskStatusStyles } from '$lib/badges';
 	import {
+		activeAiProvider,
 		clearAiDraft,
 		clearTaskExplanation,
 		createTask,
@@ -499,9 +500,25 @@
 	let explainError = $state('');
 	let explainAbort = $state<AbortController | null>(null);
 	let conversationEl = $state<HTMLDivElement | null>(null);
-	// Model used for THIS chat — independent of the global planning model
-	// (settings.aiModel is only for project planning / spec generation).
-	let explainModel = $state(settings.aiModel);
+	// Model used for THIS chat — independent of the active provider's default
+	// model (which is what project planning / spec generation uses). Re-syncs
+	// to the active provider's model whenever the active provider itself
+	// changes, but otherwise leaves the user's local override alone.
+	let explainModel = $state('');
+	let explainModelProviderId = $state('');
+	$effect(() => {
+		const provider = activeAiProvider();
+		if (provider && provider.id !== explainModelProviderId) {
+			explainModelProviderId = provider.id;
+			explainModel = provider.model;
+		}
+	});
+	/** The active provider, with its model swapped for the chat's own picker. */
+	const explainProvider = $derived.by(() => {
+		const provider = activeAiProvider();
+		if (!provider) return null;
+		return explainModel ? { ...provider, model: explainModel } : provider;
+	});
 
 	// Connected local repository: scan state plus the per-task repo context
 	// that is injected into the AI prompts.
@@ -647,6 +664,7 @@
 	}
 
 	async function generateExplanation(task: Task) {
+		if (!explainProvider) return;
 		explainMessages = [];
 		explainPending = '';
 		explainError = '';
@@ -657,8 +675,7 @@
 			const repo = await ensureRepoContext(task);
 			const text = await explainTask({
 				...explainContext(task, repo),
-				apiKey: settings.aiApiKey,
-				model: explainModel,
+				provider: explainProvider,
 				onDelta: (delta) => (explainPending += delta),
 				signal: abort.signal
 			});
@@ -681,7 +698,7 @@
 	}
 
 	async function handleExplain(task: Task) {
-		if (!project || !settings.aiApiKey || explainBusy) return;
+		if (!project || !explainProvider || explainBusy) return;
 		explainTarget = task;
 		explainError = '';
 		// Start scanning the connected repository in the background so the chat
@@ -716,7 +733,7 @@
 	/** Checks the task against the connected repository: is it implemented, what
 	 *  is missing, and review notes. Result streams in as an assistant reply. */
 	async function checkTaskInRepo() {
-		if (!explainTarget || explainBusy || !project?.repoPath) return;
+		if (!explainTarget || explainBusy || !project?.repoPath || !explainProvider) return;
 		const task = explainTarget;
 		const repo = await ensureRepoContext(task);
 		if (!repo) {
@@ -736,8 +753,7 @@
 		try {
 			const text = await checkTaskAgainstRepo({
 				context: { ...explainContext(task, repo), repo },
-				apiKey: settings.aiApiKey,
-				model: explainModel,
+				provider: explainProvider,
 				onDelta: (delta) => (explainPending += delta),
 				signal: abort.signal
 			});
@@ -805,7 +821,7 @@
 
 	/** Appends the question to the conversation and starts answering it. */
 	function sendFollowUpText(raw: string) {
-		if (!raw.trim() || !explainTarget || !settings.aiApiKey) return;
+		if (!raw.trim() || !explainTarget || !explainProvider) return;
 		const question = formatUserMessage(raw.trim());
 		explainInput = '';
 		explainError = '';
@@ -815,7 +831,7 @@
 
 	/** Answers the first unanswered user question in the conversation. */
 	async function answerNext() {
-		if (!explainTarget || explainBusy || explainMessages.length === 0) return;
+		if (!explainTarget || explainBusy || explainMessages.length === 0 || !explainProvider) return;
 		// Everything after the last assistant reply is unanswered (user) input.
 		let start = 0;
 		for (let i = 0; i < explainMessages.length; i++) {
@@ -834,8 +850,7 @@
 				context: explainContext(task, repo),
 				history: explainMessages.slice(0, start),
 				question,
-				apiKey: settings.aiApiKey,
-				model: explainModel,
+				provider: explainProvider,
 				onDelta: (delta) => (explainPending += delta),
 				signal: abort.signal
 			});
@@ -963,7 +978,7 @@
 	let aiError = $state('');
 	let aiDraft = $state<AiDraft | null>(null);
 	let aiPublished = $state(false);
-	let aiNeedsKey = $state(false);
+	let aiNeedsProvider = $state(false);
 	let aiStatus = $state<AiDraftStatus | null>(null);
 	let aiRepoEnabled = $state(true);
 	let newStory = $state('');
@@ -1042,13 +1057,13 @@
 		aiOpen = true;
 		aiPublished = false;
 		aiError = '';
-		aiNeedsKey = !settings.aiApiKey;
+		aiNeedsProvider = !activeAiProvider();
 		if (!aiDue) aiDue = project.due.slice(0, 10);
 		if (Object.keys(aiIncluded).length === 0) {
 			aiIncluded = Object.fromEntries(members.map((m) => [m.id, true]));
 			aiSpecialty = Object.fromEntries(members.map((m) => [m.id, '']));
 		}
-		if (!aiNeedsKey && aiSpecialties.length === 0) suggestSpecialtiesNow();
+		if (!aiNeedsProvider && aiSpecialties.length === 0) suggestSpecialtiesNow();
 	}
 
 	function closeAiPanel() {
@@ -1059,16 +1074,12 @@
 	}
 
 	async function suggestSpecialtiesNow() {
-		if (!project || !settings.aiApiKey) return;
+		const provider = activeAiProvider();
+		if (!project || !provider) return;
 		aiSuggesting = true;
 		aiError = '';
 		try {
-			aiSpecialties = await suggestSpecialties(
-				project.name,
-				project.description,
-				settings.aiApiKey,
-				settings.aiModel
-			);
+			aiSpecialties = await suggestSpecialties(project.name, project.description, provider);
 		} catch (err) {
 			aiError = err instanceof Error ? err.message : String(err);
 		} finally {
@@ -1094,8 +1105,9 @@
 
 	async function handleAiGenerate(refine = false) {
 		if (!project) return;
-		if (!settings.aiApiKey) {
-			aiNeedsKey = true;
+		const provider = activeAiProvider();
+		if (!provider) {
+			aiNeedsProvider = true;
 			return;
 		}
 		if (!aiDesires.trim()) {
@@ -1118,8 +1130,7 @@
 					specialty: aiSpecialty[m.id] ?? ''
 				})),
 				existingTitles: tasks.filter((t) => t.projectId === project.id).map((t) => t.title),
-				apiKey: settings.aiApiKey,
-				model: settings.aiModel,
+				provider,
 				currentDraft: refine && aiDraft ? aiDraft : undefined,
 				repo: repo ?? undefined,
 				onStatus: (s) => (aiStatus = s)
@@ -1896,11 +1907,11 @@
 				</button>
 			</header>
 
-			{#if aiNeedsKey}
+			{#if aiNeedsProvider}
 				<div
 					class="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700"
 				>
-					Add your DeepSeek API key in{' '}
+					Connect an AI provider in{' '}
 					<a href={resolve('/settings')} class="font-medium underline">Settings → AI</a> to use
 					the AI generator.
 				</div>
@@ -2497,10 +2508,10 @@
 													event.stopPropagation();
 													handleExplain(task);
 												}}
-												disabled={!settings.aiApiKey}
+												disabled={!activeAiProvider()}
 												title={
-													!settings.aiApiKey
-														? 'Add your DeepSeek API key in Settings → AI'
+													!activeAiProvider()
+														? 'Connect an AI provider in Settings → AI'
 														: explainedTaskIds.has(task.id)
 															? 'Open the saved explanation for this task'
 															: 'Have AI explain this task'
@@ -3104,8 +3115,8 @@
 						bind:value={explainModel}
 						ariaLabel="Model"
 						options={
-							settings.aiModels.length > 0
-								? settings.aiModels.map((m) => ({ value: m, label: m }))
+							(activeAiProvider()?.models.length ?? 0) > 0
+								? (activeAiProvider()?.models ?? []).map((m) => ({ value: m, label: m }))
 								: [{ value: explainModel, label: explainModel }]
 						}
 					/>
@@ -3139,7 +3150,7 @@
 						<button
 							type="submit"
 							class="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-indigo-600 px-3.5 text-sm font-medium text-white transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
-							disabled={!explainInput.trim() || !settings.aiApiKey}
+							disabled={!explainInput.trim() || !explainProvider}
 						>
 							Send
 						</button>
