@@ -1,4 +1,5 @@
 import { Command, type Child, type TerminatedPayload } from '@tauri-apps/plugin-shell';
+import { tempDir } from '@tauri-apps/api/path';
 
 /**
  * Bridges to a local Claude Code CLI installation via the Agent Client
@@ -292,7 +293,13 @@ export async function runClaudeCodeTurn(
 
 	try {
 		await send(buildInitializeRequest(nextId++));
-		const sessionResult = (await send(buildSessionNewRequest(nextId++, '.'))) as
+		// ACP requires an absolute cwd. Looji has no "project" of its own to
+		// hand over here (this is task chat, not a code-editing session), and
+		// clientCapabilities above already declined file read/write, so a
+		// neutral temp directory - not the user's actual filesystem - is used
+		// rather than guessing at a real project path.
+		const cwd = await tempDir();
+		const sessionResult = (await send(buildSessionNewRequest(nextId++, cwd))) as
 			| { sessionId?: string }
 			| undefined;
 		const sessionId = sessionResult?.sessionId;
