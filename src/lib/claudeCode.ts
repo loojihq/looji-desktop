@@ -21,9 +21,25 @@ import { Command, type Child, type TerminatedPayload } from '@tauri-apps/plugin-
  * uses Claude Code's own default model.
  */
 
-const BRIDGE_COMMAND_NAME = 'claude-code-acp-bridge';
-const BRIDGE_ARGS = ['-y', '@agentclientprotocol/claude-agent-acp'];
 const ACP_PROTOCOL_VERSION = 1;
+const BRIDGE_ARGS = ['-y', '@agentclientprotocol/claude-agent-acp'];
+const INSTALL_ARGS = ['install', '-g', '@anthropic-ai/claude-code'];
+
+/**
+ * On Windows, npm-ecosystem CLIs (npx, npm, claude, ...) are installed as
+ * `.cmd` shim files, not real `.exe` binaries - `node.exe` is the only one
+ * of these that's a genuine executable there. A shell like PowerShell/cmd.exe
+ * resolves the bare name to its `.cmd` automatically, but Tauri's shell
+ * plugin launches processes directly (no shell in between) and needs the
+ * exact literal name - hence the "-windows" capability entries with an
+ * explicit `.cmd` suffix, selected here at runtime.
+ */
+const isWindows =
+	typeof navigator !== 'undefined' && /win/i.test(navigator.userAgent || navigator.platform || '');
+
+function platformCommandName(base: string): string {
+	return isWindows ? `${base}-windows` : base;
+}
 
 type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string };
 
@@ -162,9 +178,11 @@ async function checkCommand(name: string, args: string[]): Promise<boolean> {
  * testProviderConnection()).
  */
 export async function detectClaudeCode(): Promise<ClaudeCodeDetection> {
+	// node-version-check has no -windows variant: node.exe is a real binary
+	// on every platform, unlike the npm-shimmed CLIs below.
 	const nodeAvailable = await checkCommand('node-version-check', ['--version']);
 	if (!nodeAvailable) return { nodeAvailable: false, cliAvailable: false };
-	const cliAvailable = await checkCommand('claude-version-check', ['--version']);
+	const cliAvailable = await checkCommand(platformCommandName('claude-version-check'), ['--version']);
 	return { nodeAvailable: true, cliAvailable };
 }
 
@@ -178,11 +196,10 @@ export class ClaudeCodeInstallError extends Error {}
  * interactive OAuth flow this app can't drive on their behalf.
  */
 export async function installClaudeCodeCli(): Promise<void> {
-	const output = await Command.create('install-claude-code-cli', [
-		'install',
-		'-g',
-		'@anthropic-ai/claude-code'
-	]).execute();
+	const output = await Command.create(
+		platformCommandName('install-claude-code-cli'),
+		INSTALL_ARGS
+	).execute();
 	if (output.code !== 0) {
 		throw new ClaudeCodeInstallError(output.stderr.trim() || 'npm install failed.');
 	}
@@ -204,7 +221,7 @@ export async function runClaudeCodeTurn(
 	onDelta: (delta: string) => void,
 	signal?: AbortSignal
 ): Promise<string> {
-	const command = Command.create(BRIDGE_COMMAND_NAME, BRIDGE_ARGS);
+	const command = Command.create(platformCommandName('claude-code-acp-bridge'), BRIDGE_ARGS);
 	let buffer = '';
 	let full = '';
 	let nextId = 1;
