@@ -13,9 +13,8 @@
     {
       "identifier": "http:default",
       "allow": [
-        { "url": "https://api.deepseek.com/*" },
-        { "url": "https://api.github.com/*" },
-        { "url": "https://github.com/*" }
+        { "url": "https://**" },
+        { "url": "http://**" }
       ]
     },
     "dialog:default",

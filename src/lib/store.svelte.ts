@@ -4,6 +4,7 @@ import type { TaskChatMessage } from './ai';
 import type { RepoFile } from './repo';
 import type {
 	AiDraft,
+	AiProvider,
 	AuditEntry,
 	Member,
 	Priority,
@@ -141,9 +142,8 @@ const DEFAULT_SETTINGS: Settings = {
 	theme: 'system',
 	autoEscalate: true,
 	workspaceName: 'My workspace',
-	aiApiKey: '',
-	aiModel: 'deepseek-chat',
-	aiModels: [],
+	aiProviders: [],
+	activeAiProviderId: '',
 	boardStatuses: ['todo', 'in_progress', 'in_review', 'done']
 };
 
@@ -264,12 +264,60 @@ async function load(): Promise<void> {
 		await refreshWorkspaces();
 		await refreshCurrentWorkspace();
 		await refreshAll();
+		await migrateLegacyAiSettings();
 		await runAutomations();
 	} catch (err) {
 		console.error('Failed to load the database', err);
 		status.error = err instanceof Error ? err.message : String(err);
 	}
 	status.ready = true;
+}
+
+/**
+ * One-time upgrade path: before the multi-provider AI system, a single
+ * global aiApiKey/aiModel pair lived directly in the settings table (talking
+ * to DeepSeek's API, hardcoded). If a user upgrades with one configured and
+ * no providers have been set up yet, synthesize an initial "openai-compatible"
+ * provider from it so the key isn't silently lost.
+ */
+async function migrateLegacyAiSettings(): Promise<void> {
+	if (settings.aiProviders.length > 0) return;
+	const database = requireDb();
+	const rows = await database.select<SettingsRow[]>(
+		"SELECT key, value FROM settings WHERE key IN ('aiApiKey', 'aiModel')"
+	);
+	let apiKey = '';
+	let model = '';
+	for (const row of rows) {
+		try {
+			const parsed: unknown = JSON.parse(row.value);
+			if (row.key === 'aiApiKey' && typeof parsed === 'string') apiKey = parsed;
+			if (row.key === 'aiModel' && typeof parsed === 'string') model = parsed;
+		} catch {
+			// ignore malformed legacy values
+		}
+	}
+	if (!apiKey) return;
+	const provider: AiProvider = {
+		id: newId(),
+		kind: 'openai-compatible',
+		label: 'DeepSeek',
+		baseUrl: 'https://api.deepseek.com',
+		apiKey,
+		model: model || 'deepseek-chat',
+		models: []
+	};
+	settings.aiProviders = [provider];
+	settings.activeAiProviderId = provider.id;
+	await database.execute(
+		"INSERT INTO settings (key, value) VALUES ('aiProviders', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+		[JSON.stringify(settings.aiProviders)]
+	);
+	await database.execute(
+		"INSERT INTO settings (key, value) VALUES ('activeAiProviderId', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+		[JSON.stringify(settings.activeAiProviderId)]
+	);
+	await database.execute("DELETE FROM settings WHERE key IN ('aiApiKey', 'aiModel', 'aiModels')");
 }
 
 async function refreshWorkspaces(): Promise<void> {
@@ -381,6 +429,11 @@ export function memberById(id: string | null): Member | undefined {
 
 export function projectById(id: string): Project | undefined {
 	return projects.find((project) => project.id === id);
+}
+
+/** The currently-active AI provider, or null when none is configured/selected. */
+export function activeAiProvider(): AiProvider | null {
+	return settings.aiProviders.find((p) => p.id === settings.activeAiProviderId) ?? null;
 }
 
 export function projectProgress(projectId: string): number {

@@ -1,10 +1,38 @@
 import { fetch } from '@tauri-apps/plugin-http';
-import type { AiDraft, AiDraftTask, Priority } from './types';
+import type { AiDraft, AiDraftTask, AiProvider, AiProviderKind, Priority } from './types';
 
-const DEEPSEEK_BASE = 'https://api.deepseek.com';
-const DEEPSEEK_URL = `${DEEPSEEK_BASE}/chat/completions`;
-const DEFAULT_MODEL = 'deepseek-chat';
 const PRIORITIES: Priority[] = ['urgent', 'high', 'medium', 'low'];
+const ANTHROPIC_VERSION = '2023-06-01';
+// Anthropic requires an explicit cap; this is comfortably within every
+// current Claude model's default output limit. Draft generation already
+// tolerates a cut-off response via its continuation-call loop below.
+const ANTHROPIC_MAX_TOKENS = 8192;
+
+/** Sensible starting point when adding a new provider of a given kind. */
+export const PROVIDER_PRESETS: Record<
+	AiProviderKind,
+	{ label: string; baseUrl: string; model: string; needsKey: boolean }
+> = {
+	openai: { label: 'OpenAI', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini', needsKey: true },
+	anthropic: {
+		label: 'Anthropic',
+		baseUrl: 'https://api.anthropic.com/v1',
+		model: 'claude-sonnet-5',
+		needsKey: true
+	},
+	ollama: {
+		label: 'Ollama',
+		baseUrl: 'http://localhost:11434/v1',
+		model: 'llama3.1',
+		needsKey: false
+	},
+	'openai-compatible': {
+		label: 'Custom (OpenAI-compatible)',
+		baseUrl: 'https://api.deepseek.com',
+		model: 'deepseek-chat',
+		needsKey: true
+	}
+};
 
 type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string };
 
@@ -17,21 +45,41 @@ export type AiDraftStatus = {
 	tasks?: number;
 };
 
-async function chat(
-	apiKey: string,
-	model: string,
+function apiError(providerLabel: string, status: number, detail: string): Error {
+	return new Error(`${providerLabel} API error (${status}): ${detail.slice(0, 400)}`);
+}
+
+async function readErrorDetail(response: Response): Promise<string> {
+	try {
+		return await response.text();
+	} catch {
+		return '';
+	}
+}
+
+// ---------------------------------------------------------------------------
+// OpenAI-compatible family: openai, ollama, openai-compatible (incl. DeepSeek).
+// All three speak the same /chat/completions request/response shape.
+// ---------------------------------------------------------------------------
+
+function openAiHeaders(provider: AiProvider): Record<string, string> {
+	const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+	if (provider.apiKey) headers.Authorization = `Bearer ${provider.apiKey}`;
+	return headers;
+}
+
+async function chatOpenAI(
+	provider: AiProvider,
 	messages: ChatMessage[],
 	json: boolean
 ): Promise<ChatResult> {
+	const url = `${provider.baseUrl}/chat/completions`;
 	const makeRequest = (useJsonMode: boolean) =>
-		fetch(DEEPSEEK_URL, {
+		fetch(url, {
 			method: 'POST',
-			headers: {
-				'Content-Type': 'application/json',
-				Authorization: `Bearer ${apiKey}`
-			},
+			headers: openAiHeaders(provider),
 			body: JSON.stringify({
-				model: model || DEFAULT_MODEL,
+				model: provider.model,
 				messages,
 				temperature: 0.7,
 				...(useJsonMode ? { response_format: { type: 'json_object' } } : {})
@@ -46,13 +94,7 @@ async function chat(
 			response = await makeRequest(false);
 		}
 		if (!response.ok) {
-			let detail = '';
-			try {
-				detail = await response.text();
-			} catch {
-				// ignore body read errors
-			}
-			throw new Error(`DeepSeek API error (${response.status}): ${detail.slice(0, 400)}`);
+			throw apiError(provider.label, response.status, await readErrorDetail(response));
 		}
 		const data = await response.json();
 		const choice = data?.choices?.[0];
@@ -64,8 +106,219 @@ async function chat(
 		}
 	}
 	throw new Error(
-		`DeepSeek returned an empty response (finish_reason: ${lastFinishReason}). Try again.`
+		`${provider.label} returned an empty response (finish_reason: ${lastFinishReason}). Try again.`
 	);
+}
+
+async function streamChatOpenAI(
+	provider: AiProvider,
+	messages: ChatMessage[],
+	onDelta: (delta: string) => void,
+	signal?: AbortSignal
+): Promise<ChatResult> {
+	const url = `${provider.baseUrl}/chat/completions`;
+	const response = await fetch(url, {
+		method: 'POST',
+		headers: openAiHeaders(provider),
+		signal,
+		body: JSON.stringify({
+			model: provider.model,
+			messages,
+			temperature: 0.7,
+			stream: true
+		})
+	});
+	if (!response.ok) {
+		throw apiError(provider.label, response.status, await readErrorDetail(response));
+	}
+	if (!response.body) {
+		throw new Error(`${provider.label} returned no stream body.`);
+	}
+
+	const reader = response.body.getReader();
+	const decoder = new TextDecoder();
+	let buffer = '';
+	let full = '';
+	let finishReason = 'unknown';
+	while (true) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		buffer += decoder.decode(value, { stream: true });
+		const lines = buffer.split('\n');
+		buffer = lines.pop() ?? '';
+		for (const line of lines) {
+			const trimmed = line.trim();
+			if (!trimmed.startsWith('data:')) continue;
+			const payload = trimmed.slice(5).trim();
+			if (payload === '[DONE]') continue;
+			try {
+				const parsed = JSON.parse(payload) as {
+					choices?: { delta?: { content?: unknown }; finish_reason?: unknown }[];
+				};
+				const choice = parsed.choices?.[0];
+				const delta = choice?.delta?.content;
+				const reason = choice?.finish_reason;
+				if (typeof reason === 'string' && reason) finishReason = reason;
+				if (typeof delta === 'string' && delta) {
+					full += delta;
+					onDelta(delta);
+				}
+			} catch {
+				// skip malformed keep-alive/comment lines
+			}
+		}
+	}
+	if (!full.trim()) {
+		throw new Error(
+			`${provider.label} returned an empty response (finish_reason: ${finishReason}). Try again.`
+		);
+	}
+	return { content: full, finishReason };
+}
+
+// ---------------------------------------------------------------------------
+// Anthropic: different endpoint, auth header, message shape (system is a
+// top-level field, not a message) and streaming event format.
+// ---------------------------------------------------------------------------
+
+function anthropicHeaders(provider: AiProvider): Record<string, string> {
+	return {
+		'Content-Type': 'application/json',
+		'x-api-key': provider.apiKey,
+		'anthropic-version': ANTHROPIC_VERSION
+	};
+}
+
+/** Anthropic takes the system prompt as a top-level field, not a message. */
+function splitAnthropicMessages(messages: ChatMessage[]): {
+	system: string;
+	rest: { role: 'user' | 'assistant'; content: string }[];
+} {
+	const systemParts: string[] = [];
+	const rest: { role: 'user' | 'assistant'; content: string }[] = [];
+	for (const m of messages) {
+		if (m.role === 'system') systemParts.push(m.content);
+		else rest.push({ role: m.role, content: m.content });
+	}
+	return { system: systemParts.join('\n\n'), rest };
+}
+
+async function chatAnthropic(provider: AiProvider, messages: ChatMessage[]): Promise<ChatResult> {
+	const { system, rest } = splitAnthropicMessages(messages);
+	const response = await fetch(`${provider.baseUrl}/messages`, {
+		method: 'POST',
+		headers: anthropicHeaders(provider),
+		body: JSON.stringify({
+			model: provider.model,
+			max_tokens: ANTHROPIC_MAX_TOKENS,
+			...(system ? { system } : {}),
+			messages: rest
+		})
+	});
+	if (!response.ok) {
+		throw apiError(provider.label, response.status, await readErrorDetail(response));
+	}
+	const data = await response.json();
+	const blocks: unknown = data?.content;
+	const textBlock = Array.isArray(blocks)
+		? blocks.find((b): b is { type: string; text?: unknown } => b?.type === 'text')
+		: null;
+	const content: unknown = textBlock?.text;
+	const finishReason = typeof data?.stop_reason === 'string' ? data.stop_reason : 'unknown';
+	if (typeof content === 'string' && content.trim()) {
+		return { content, finishReason };
+	}
+	throw new Error(
+		`${provider.label} returned an empty response (finish_reason: ${finishReason}). Try again.`
+	);
+}
+
+async function streamChatAnthropic(
+	provider: AiProvider,
+	messages: ChatMessage[],
+	onDelta: (delta: string) => void,
+	signal?: AbortSignal
+): Promise<ChatResult> {
+	const { system, rest } = splitAnthropicMessages(messages);
+	const response = await fetch(`${provider.baseUrl}/messages`, {
+		method: 'POST',
+		headers: anthropicHeaders(provider),
+		signal,
+		body: JSON.stringify({
+			model: provider.model,
+			max_tokens: ANTHROPIC_MAX_TOKENS,
+			...(system ? { system } : {}),
+			messages: rest,
+			stream: true
+		})
+	});
+	if (!response.ok) {
+		throw apiError(provider.label, response.status, await readErrorDetail(response));
+	}
+	if (!response.body) {
+		throw new Error(`${provider.label} returned no stream body.`);
+	}
+
+	const reader = response.body.getReader();
+	const decoder = new TextDecoder();
+	let buffer = '';
+	let full = '';
+	let finishReason = 'unknown';
+	while (true) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		buffer += decoder.decode(value, { stream: true });
+		const lines = buffer.split('\n');
+		buffer = lines.pop() ?? '';
+		for (const line of lines) {
+			const trimmed = line.trim();
+			if (!trimmed.startsWith('data:')) continue;
+			const payload = trimmed.slice(5).trim();
+			if (!payload) continue;
+			try {
+				const parsed = JSON.parse(payload) as {
+					type?: string;
+					delta?: { type?: string; text?: unknown; stop_reason?: unknown };
+				};
+				if (parsed.type === 'content_block_delta' && parsed.delta?.type === 'text_delta') {
+					const text = parsed.delta.text;
+					if (typeof text === 'string' && text) {
+						full += text;
+						onDelta(text);
+					}
+				} else if (parsed.type === 'message_delta' && typeof parsed.delta?.stop_reason === 'string') {
+					finishReason = parsed.delta.stop_reason;
+				}
+			} catch {
+				// skip malformed keep-alive/comment lines
+			}
+		}
+	}
+	if (!full.trim()) {
+		throw new Error(
+			`${provider.label} returned an empty response (finish_reason: ${finishReason}). Try again.`
+		);
+	}
+	return { content: full, finishReason };
+}
+
+// ---------------------------------------------------------------------------
+// Dispatch
+// ---------------------------------------------------------------------------
+
+async function chat(provider: AiProvider, messages: ChatMessage[], json: boolean): Promise<ChatResult> {
+	if (provider.kind === 'anthropic') return chatAnthropic(provider, messages);
+	return chatOpenAI(provider, messages, json);
+}
+
+async function streamChat(
+	provider: AiProvider,
+	messages: ChatMessage[],
+	onDelta: (delta: string) => void,
+	signal?: AbortSignal
+): Promise<ChatResult> {
+	if (provider.kind === 'anthropic') return streamChatAnthropic(provider, messages, onDelta, signal);
+	return streamChatOpenAI(provider, messages, onDelta, signal);
 }
 
 /** Parses a model reply, tolerating markdown code fences around the JSON. */
@@ -79,15 +332,13 @@ function extractJson(text: string): unknown {
  * Asks the model which specialties/roles are relevant for a project,
  * based on its name and description. Returns concise role labels.
  */
-	export async function suggestSpecialties(
+export async function suggestSpecialties(
 	projectName: string,
 	description: string,
-	apiKey: string,
-	model: string
+	provider: AiProvider
 ): Promise<string[]> {
 	const { content } = await chat(
-		apiKey,
-		model,
+		provider,
 		[
 			{
 				role: 'system',
@@ -144,11 +395,11 @@ export async function generateAiDraft(input: {
 	dueDate: string;
 	members: { name: string; specialty: string }[];
 	existingTitles: string[];
-	apiKey: string;
-	model: string;
+	provider: AiProvider;
 	currentDraft?: AiDraft;
 	repo?: RepoContext;
 	onStatus?: (status: AiDraftStatus) => void;
+	signal?: AbortSignal;
 }): Promise<AiDraft> {
 	const memberLines =
 		input.members.length > 0
@@ -291,8 +542,7 @@ ${
 			let streamBuffer = '';
 			let lastReported = -1;
 			const streamResult = await streamChat(
-				input.apiKey,
-				input.model,
+				input.provider,
 				[
 					{ role: 'system', content: systemPrompt },
 					{ role: 'user', content: userContent }
@@ -311,11 +561,15 @@ ${
 							tasks: tasks.length + count
 						});
 					}
-				}
+				},
+				input.signal
 			);
 			content = streamResult.content;
 			finishReason = streamResult.finishReason;
 		} catch (err) {
+			// A deliberate cancel must stop the whole draft, not retry into more
+			// (immediately-aborting) calls until MAX_CALLS is exhausted.
+			if (input.signal?.aborted) throw err;
 			lastError = err;
 			continue; // a single failed call shouldn't abort the whole draft
 		}
@@ -381,14 +635,9 @@ ${
 	return { spec: spec[0] ?? '', userStories, tasks };
 }
 
-/** Verifies the API key by making a minimal request. Throws on failure. */
-export async function testDeepSeekConnection(apiKey: string, model: string): Promise<void> {
-	await chat(
-		apiKey,
-		model,
-		[{ role: 'user', content: 'Reply with exactly: ok' }],
-		false
-	);
+/** Verifies the provider's credentials/endpoint by making a minimal request. Throws on failure. */
+export async function testProviderConnection(provider: AiProvider): Promise<void> {
+	await chat(provider, [{ role: 'user', content: 'Reply with exactly: ok' }], false);
 }
 
 /** Context describing a task and the project it lives in. */
@@ -466,97 +715,16 @@ ${others}${context.repo ? repoPromptText(context.repo) : ''}`;
 }
 
 /**
- * Streams a chat completion from DeepSeek (SSE), calling onDelta for each
- * content chunk as it arrives. Resolves with the full text.
- */
-async function streamChat(
-	apiKey: string,
-	model: string,
-	messages: ChatMessage[],
-	onDelta: (delta: string) => void,
-	signal?: AbortSignal
-): Promise<ChatResult> {
-	const response = await fetch(DEEPSEEK_URL, {
-		method: 'POST',
-		headers: {
-			'Content-Type': 'application/json',
-			Authorization: `Bearer ${apiKey}`
-		},
-		signal,
-		body: JSON.stringify({
-			model: model || DEFAULT_MODEL,
-			messages,
-			temperature: 0.7,
-			stream: true
-		})
-	});
-	if (!response.ok) {
-		let detail = '';
-		try {
-			detail = await response.text();
-		} catch {
-			// ignore body read errors
-		}
-		throw new Error(`DeepSeek API error (${response.status}): ${detail.slice(0, 400)}`);
-	}
-	if (!response.body) {
-		throw new Error('DeepSeek returned no stream body.');
-	}
-
-	const reader = response.body.getReader();
-	const decoder = new TextDecoder();
-	let buffer = '';
-	let full = '';
-	let finishReason = 'unknown';
-	while (true) {
-		const { done, value } = await reader.read();
-		if (done) break;
-		buffer += decoder.decode(value, { stream: true });
-		const lines = buffer.split('\n');
-		buffer = lines.pop() ?? '';
-		for (const line of lines) {
-			const trimmed = line.trim();
-			if (!trimmed.startsWith('data:')) continue;
-			const payload = trimmed.slice(5).trim();
-			if (payload === '[DONE]') continue;
-			try {
-				const parsed = JSON.parse(payload) as {
-					choices?: { delta?: { content?: unknown }; finish_reason?: unknown }[];
-				};
-				const choice = parsed.choices?.[0];
-				const delta = choice?.delta?.content;
-				const reason = choice?.finish_reason;
-				if (typeof reason === 'string' && reason) finishReason = reason;
-				if (typeof delta === 'string' && delta) {
-					full += delta;
-					onDelta(delta);
-				}
-			} catch {
-				// skip malformed keep-alive/comment lines
-			}
-		}
-	}
-	if (!full.trim()) {
-		throw new Error(
-			`DeepSeek returned an empty response (finish_reason: ${finishReason}). Try again.`
-		);
-	}
-	return { content: full, finishReason };
-}
-
-/**
  * Explains a task for the person doing it: what it needs, how to implement it,
  * how it relates to the rest of the project, and who is involved.
  */
 export async function explainTask(input: TaskContext & {
-	apiKey: string;
-	model: string;
+	provider: AiProvider;
 	onDelta?: (delta: string) => void;
 	signal?: AbortSignal;
 }): Promise<string> {
 	const result = await streamChat(
-		input.apiKey,
-		input.model,
+		input.provider,
 		[
 			{ role: 'system', content: TASK_SYSTEM_PROMPT },
 			{
@@ -584,8 +752,7 @@ export async function taskChatFollowUp(input: {
 	context: TaskContext;
 	history: TaskChatMessage[];
 	question: string;
-	apiKey: string;
-	model: string;
+	provider: AiProvider;
 	onDelta?: (delta: string) => void;
 	signal?: AbortSignal;
 }): Promise<string> {
@@ -599,8 +766,7 @@ export async function taskChatFollowUp(input: {
 		}
 	];
 	const result = await streamChat(
-		input.apiKey,
-		input.model,
+		input.provider,
 		messages,
 		input.onDelta ?? (() => {}),
 		input.signal
@@ -617,14 +783,12 @@ const REPO_CHECK_SYSTEM_PROMPT =
  */
 export async function checkTaskAgainstRepo(input: {
 	context: TaskContext & { repo: RepoContext };
-	apiKey: string;
-	model: string;
+	provider: AiProvider;
 	onDelta?: (delta: string) => void;
 	signal?: AbortSignal;
 }): Promise<string> {
 	const result = await streamChat(
-		input.apiKey,
-		input.model,
+		input.provider,
 		[
 			{ role: 'system', content: REPO_CHECK_SYSTEM_PROMPT },
 			{
@@ -646,27 +810,26 @@ Base your assessment ONLY on the file tree, symbol map and snippets provided abo
 	return result.content.trim();
 }
 
-/** Lists the models available to the given API key (OpenAI-compatible /models endpoint). */
-export async function fetchDeepSeekModels(apiKey: string): Promise<string[]> {
-	const response = await fetch(`${DEEPSEEK_BASE}/models`, {
-		method: 'GET',
-		headers: { Authorization: `Bearer ${apiKey}` }
-	});
-	if (!response.ok) {
-		let detail = '';
-		try {
-			detail = await response.text();
-		} catch {
-			// ignore body read errors
-		}
-		throw new Error(`DeepSeek API error (${response.status}): ${detail.slice(0, 400)}`);
-	}
-	const data = await response.json();
-	const list: unknown = data?.data;
+/** Parses an OpenAI/Anthropic-shaped models list response ({ data: [{ id }] }). */
+function parseModelsList(data: unknown): string[] {
+	const list: unknown = (data as { data?: unknown } | null)?.data;
 	if (!Array.isArray(list)) return [];
 	return list
 		.filter((m): m is { id?: unknown } => typeof m === 'object' && m !== null)
 		.map((m) => (typeof m.id === 'string' ? m.id : ''))
 		.filter(Boolean)
 		.sort();
+}
+
+/** Lists the models available to the given provider. */
+export async function fetchProviderModels(provider: AiProvider): Promise<string[]> {
+	const isAnthropic = provider.kind === 'anthropic';
+	const response = await fetch(`${provider.baseUrl}/models`, {
+		method: 'GET',
+		headers: isAnthropic ? anthropicHeaders(provider) : openAiHeaders(provider)
+	});
+	if (!response.ok) {
+		throw apiError(provider.label, response.status, await readErrorDetail(response));
+	}
+	return parseModelsList(await response.json());
 }

@@ -31,7 +31,7 @@ A calm, focused desktop workspace for planning and tracking projects. Plan with 
 | Frontend | Svelte 5, SvelteKit (static adapter), Tailwind CSS 4 |
 | UI icons | Lucide |
 | Database | SQLite via tauri-plugin-sql |
-| AI | DeepSeek API (chat completions) |
+| AI | Any OpenAI, Anthropic, Ollama, or OpenAI-compatible provider (DeepSeek, Groq, OpenRouter, …) |
 | PDF | jsPDF with embedded Poppins fonts |
 | Updates | tauri-plugin-updater with minisign signatures |
 
