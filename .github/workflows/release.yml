@@ -104,8 +104,8 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: 'Workmaster ${{ github.ref_name }}'
-          releaseBody: 'Release ${{ github.ref_name }} of Workmaster. Download the installer for your platform from the assets below. The update system picks this release up automatically.'
+          releaseName: 'Looji ${{ github.ref_name }}'
+          releaseBody: 'Release ${{ github.ref_name }} of Looji. Download the installer for your platform from the assets below. The update system picks this release up automatically.'
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}

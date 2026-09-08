@@ -1,10 +1,10 @@
-# Workmaster
+# Looji
 
 A calm, focused desktop workspace for planning and tracking projects. Plan with AI, inspect your local code, and keep the board moving.
 
-![Version](https://img.shields.io/github/v/release/danielkosgei/workmaster)
-![CI](https://img.shields.io/github/actions/workflow/status/danielkosgei/workmaster/ci.yml?label=CI)
-![Release](https://img.shields.io/github/actions/workflow/status/danielkosgei/workmaster/release.yml?label=Release)
+![Version](https://img.shields.io/github/v/release/loojihq/looji-desktop)
+![CI](https://img.shields.io/github/actions/workflow/status/loojihq/looji-desktop/ci.yml?label=CI)
+![Release](https://img.shields.io/github/actions/workflow/status/loojihq/looji-desktop/release.yml?label=Release)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Built with Tauri](https://img.shields.io/badge/Tauri-2-4f46e5)
 ![Built with Svelte](https://img.shields.io/badge/Svelte-5-orange)
@@ -71,7 +71,7 @@ git tag v1.2.3
 git push origin v1.2.3
 ```
 
-The `Release` workflow builds unsigned bundles for Windows, Linux, and macOS, attaches them to a draft GitHub release, and publishes `latest.json` for the update system.
+The `Release` workflow builds unsigned bundles for Windows, Linux, and macOS, attaches them to a published GitHub release, and publishes `latest.json` for the update system. The release goes live immediately when the workflow finishes — there's no manual "publish" step (a draft release wouldn't be visible to the update checker at all, since GitHub only exposes draft metadata and assets to authenticated requests with repo access).
 
 Update signatures use minisign. The public key is baked into the app; the private key must be available when bundling. Configure this repository secret:
 
@@ -81,7 +81,7 @@ For local production builds, export the same environment variable before running
 
 The generated key has no password, so no password environment variable is set anywhere. If you regenerate the key with a password (`-p`), set `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` locally and add it as a secret plus the matching env in `.github/workflows/release.yml`.
 
-The update checker in the sidebar reads the latest release from `danielkosgei/workmaster`. Update the repository constant in `src/lib/update.ts` if you fork this project.
+The update checker in the sidebar reads the latest release from `loojihq/looji-desktop`. Update the repository constant in `src/lib/update.ts` if you fork this project. Note that a private repo won't work here — GitHub's release API and asset downloads both require an authenticated request for a private repo, which a distributed desktop app can't do without shipping a secret; the update checker needs the repo to be public.
 
 ## Project structure
 
@@ -98,7 +98,7 @@ src-tauri/           Tauri shell (Rust)
 
 ## Data
 
-All data lives in a single SQLite database (`workmaster.db`) on the local machine. Database migrations run automatically at startup, including after an in-app update.
+All data lives in a single SQLite database (`looji.db`) on the local machine. Database migrations run automatically at startup, including after an in-app update.
 
 ## License
 

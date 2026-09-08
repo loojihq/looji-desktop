@@ -115,7 +115,7 @@ function baseDoc(projectName: string, kind: string, pillsText: string[]): jsPDF 
 	doc.setFont('PoppinsMedium', 'normal');
 	doc.setFontSize(7.5);
 	doc.setTextColor(...INDIGO_LIGHT);
-	doc.text(`WORKMASTER  ·  ${kind.toUpperCase()}`, MARGIN, 14);
+	doc.text(`LOOJI  ·  ${kind.toUpperCase()}`, MARGIN, 14);
 	doc.text(`GENERATED ${formatDate(new Date().toISOString()).toUpperCase()}`, PAGE_W - MARGIN, 14, {
 		align: 'right'
 	});
@@ -345,7 +345,7 @@ function addFooter(doc: jsPDF, projectName: string): void {
 		doc.setFont('PoppinsMedium', 'normal');
 		doc.setFontSize(7.5);
 		doc.setTextColor(...MUTED);
-		doc.text(`WORKMASTER  ·  ${projectName}`, MARGIN, 291.5);
+		doc.text(`LOOJI  ·  ${projectName}`, MARGIN, 291.5);
 		doc.text(`Page ${i} of ${pages}`, PAGE_W - MARGIN, 291.5, { align: 'right' });
 	}
 }
@@ -404,7 +404,7 @@ export async function exportDraftPdf(input: {
 		y = taskBlock(doc, y, task);
 	}
 	addFooter(doc, input.projectName);
-	await savePdf(doc, `workmaster-${slugify(input.projectName)}-draft.pdf`);
+	await savePdf(doc, `looji-${slugify(input.projectName)}-draft.pdf`);
 }
 
 /** Exports the full project report, grouped by task status. */
@@ -449,5 +449,5 @@ export async function exportProjectPdf(input: {
 		y = statusSection(doc, y, status, group);
 	}
 	addFooter(doc, input.projectName);
-	await savePdf(doc, `workmaster-${slugify(input.projectName)}-report.pdf`);
+	await savePdf(doc, `looji-${slugify(input.projectName)}-report.pdf`);
 }

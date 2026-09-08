@@ -105,7 +105,7 @@
 <ConfirmDialog
 	open={updateOpen}
 	title={`Update to v${result?.latest ?? ''}?`}
-	message={`A new version of Workmaster is available. It will be downloaded and installed, then the app restarts. Any in-progress work is saved in the database.`}
+	message={`A new version of Looji is available. It will be downloaded and installed, then the app restarts. Any in-progress work is saved in the database.`}
 	confirmLabel="Update now"
 	onConfirm={confirmUpdate}
 	onCancel={() => (updateOpen = false)}

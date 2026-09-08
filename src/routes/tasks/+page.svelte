@@ -142,7 +142,7 @@
 </script>
 
 <svelte:head>
-	<title>Tasks · Workmaster</title>
+	<title>Tasks · Looji</title>
 </svelte:head>
 
 <div class="mb-6">

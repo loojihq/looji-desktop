@@ -62,11 +62,11 @@
 	<div class="flex h-full items-center gap-2 {isMac ? 'pl-20' : 'pl-3.5'} pr-4">
 		<img
 			src="/app-icon.png"
-			alt="Workmaster"
+			alt="Looji"
 			draggable="false"
 			class="size-4.5 rounded-[5px]"
 		/>
-		<span class="text-[11px] font-semibold tracking-tight text-neutral-600">Workmaster</span>
+		<span class="text-[11px] font-semibold tracking-tight text-neutral-600">Looji</span>
 	</div>
 
 	{#if !isMac}

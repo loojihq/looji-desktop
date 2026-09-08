@@ -2,7 +2,7 @@ import { getVersion } from '@tauri-apps/api/app';
 import { fetch } from '@tauri-apps/plugin-http';
 
 /** The GitHub repository that hosts releases. */
-const REPO = 'danielkosgei/workmaster';
+const REPO = 'loojihq/looji-desktop';
 
 const API = `https://api.github.com/repos/${REPO}/releases`;
 
@@ -42,7 +42,7 @@ export async function checkForUpdates(): Promise<UpdateCheck> {
 		let response = await fetch(`${API}/latest`, {
 			headers: {
 				Accept: 'application/vnd.github+json',
-				'User-Agent': 'workmaster'
+				'User-Agent': 'looji'
 			}
 		});
 		let data: { tag_name?: string } | null = null;
@@ -52,7 +52,7 @@ export async function checkForUpdates(): Promise<UpdateCheck> {
 			response = await fetch(API, {
 				headers: {
 					Accept: 'application/vnd.github+json',
-					'User-Agent': 'workmaster'
+					'User-Agent': 'looji'
 				}
 			});
 			if (response.ok) {

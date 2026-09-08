@@ -1472,7 +1472,7 @@
 </script>
 
 <svelte:head>
-	<title>{project?.name ?? 'Project'} · Workmaster</title>
+	<title>{project?.name ?? 'Project'} · Looji</title>
 </svelte:head>
 
 {#if !project}
