@@ -341,18 +341,23 @@
 		project ? tasks.filter((t) => t.projectId === project.id) : []
 	);
 
+	// sortOrder is only meaningful within a single status column (each status
+	// keeps its own independently-renumbered 0..n-1 sequence), so comparing it
+	// across statuses is meaningless here. Group by status in its canonical
+	// order instead (which puts "done" last), then by due date - the one
+	// ordering key that's globally comparable across every task.
+	const STATUS_ORDER: Record<TaskStatus, number> = Object.fromEntries(
+		taskStatuses.map((s, i) => [s, i])
+	) as Record<TaskStatus, number>;
+
 	const listRows = $derived(
-		[...projectTasks].sort((a, b) => {
-			if (a.status === 'done' && b.status !== 'done') return 1;
-			if (a.status !== 'done' && b.status === 'done') return -1;
-			return (
-				a.sortOrder -
-					b.sortOrder ||
-				PRIORITY_WEIGHT[a.priority] -
-					PRIORITY_WEIGHT[b.priority] ||
+		[...projectTasks].sort(
+			(a, b) =>
+				STATUS_ORDER[a.status] - STATUS_ORDER[b.status] ||
+				new Date(a.due).getTime() - new Date(b.due).getTime() ||
+				PRIORITY_WEIGHT[a.priority] - PRIORITY_WEIGHT[b.priority] ||
 				a.title.localeCompare(b.title)
-			);
-		})
+		)
 	);
 
 	const LIST_PAGE_SIZE = 25;
@@ -368,10 +373,19 @@
 		)
 	);
 
+	// The range and the rendered list must agree on which tasks count - a
+	// single old completed task shouldn't be able to skew the visible range
+	// even though it's not shown on the roadmap.
+	const roadmapTasks = $derived(
+		[...projectTasks]
+			.filter((t) => t.status !== 'done')
+			.sort((a, b) => new Date(a.due).getTime() - new Date(b.due).getTime())
+	);
+
 	const roadmapStart = $derived.by(() => {
 		const earliest =
-			projectTasks.length > 0
-				? Math.min(...projectTasks.map((t) => new Date(t.due).getTime()))
+			roadmapTasks.length > 0
+				? Math.min(...roadmapTasks.map((t) => new Date(t.due).getTime()))
 				: Date.now();
 		const d = new Date(Math.min(earliest, Date.now()));
 		d.setHours(0, 0, 0, 0);
@@ -380,20 +394,14 @@
 
 	const roadmapEnd = $derived.by(() => {
 		const latest =
-			projectTasks.length > 0
-				? Math.max(...projectTasks.map((t) => new Date(t.due).getTime()))
+			roadmapTasks.length > 0
+				? Math.max(...roadmapTasks.map((t) => new Date(t.due).getTime()))
 				: Date.now() + 86400000;
 		const d = new Date(latest);
 		d.setHours(0, 0, 0, 0);
 		d.setDate(d.getDate() + 1);
 		return d.getTime();
 	});
-
-	const roadmapTasks = $derived(
-		[...projectTasks]
-			.filter((t) => t.status !== 'done')
-			.sort((a, b) => new Date(a.due).getTime() - new Date(b.due).getTime())
-	);
 
 	function roadmapPct(due: string): number {
 		const span = roadmapEnd - roadmapStart;
@@ -429,6 +437,7 @@
 	let addingStatus = $state<TaskStatus | null>(null);
 	let newTitle = $state('');
 	let newAssigneeId = $state('');
+	let addTaskError = $state('');
 	let deleteProjectOpen = $state(false);
 	let deleteTaskTarget = $state<Task | null>(null);
 	let deleteError = $state('');
@@ -1297,19 +1306,24 @@
 		}
 	}
 
-	function handleAdd(status: TaskStatus) {
+	async function handleAdd(status: TaskStatus) {
 		if (!project || !newTitle.trim()) return;
-		createTask({
-			title: newTitle.trim(),
-			projectId: project.id,
-			status,
-			priority: 'medium',
-			assigneeId: newAssigneeId || null,
-			due: daysFromNow(7)
-		});
-		newTitle = '';
-		newAssigneeId = '';
-		addingStatus = null;
+		addTaskError = '';
+		try {
+			await createTask({
+				title: newTitle.trim(),
+				projectId: project.id,
+				status,
+				priority: 'medium',
+				assigneeId: newAssigneeId || null,
+				due: daysFromNow(7)
+			});
+			newTitle = '';
+			newAssigneeId = '';
+			addingStatus = null;
+		} catch (err) {
+			addTaskError = err instanceof Error ? err.message : String(err);
+		}
 	}
 
 	async function handleDeleteTask() {
@@ -1487,7 +1501,10 @@
 					type="button"
 					class="rounded-lg p-2 text-neutral-400 transition-colors hover:bg-red-50 hover:text-red-600"
 					aria-label="Delete project"
-					onclick={() => (deleteProjectOpen = true)}
+					onclick={() => {
+						deleteProjectOpen = true;
+						deleteError = '';
+					}}
 				>
 					<Trash2 size={15} />
 				</button>
@@ -1514,20 +1531,6 @@
 			<p class="text-xs text-neutral-400">{openCount} open tasks</p>
 		</div>
 	</section>
-
-	{#if deleteError}
-		<div class="mb-4 flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
-			<p>{deleteError}</p>
-			<button
-				type="button"
-				class="shrink-0 rounded-md p-1 text-red-400 hover:bg-red-100 hover:text-red-700"
-				aria-label="Dismiss"
-				onclick={() => (deleteError = '')}
-			>
-				<X size={14} />
-			</button>
-		</div>
-	{/if}
 
 	<div
 		class="mt-6 flex w-fit max-w-full flex-wrap items-center gap-1 rounded-lg border border-neutral-200 bg-surface p-1 shadow-xs"
@@ -1578,10 +1581,12 @@
 		</button>
 	</div>
 
-	{#if view === 'board'}
-		{#if projectEditOpen}
+	{#if projectEditOpen}
 		<form
-			onsubmit={handleProjectSave}
+			onsubmit={(event) => {
+				event.preventDefault();
+				handleProjectSave();
+			}}
 			autocomplete="off"
 			class="mt-4 rounded-xl border border-indigo-200 bg-indigo-50/60 p-4 shadow-xs"
 		>
@@ -1740,7 +1745,10 @@
 
 	{#if editTask}
 		<form
-			onsubmit={handleTaskSave}
+			onsubmit={(event) => {
+				event.preventDefault();
+				handleTaskSave();
+			}}
 			autocomplete="off"
 			class="mt-4 rounded-xl border border-indigo-200 bg-indigo-50/60 p-4 shadow-xs"
 		>
@@ -2252,22 +2260,24 @@
 		</section>
 	{/if}
 
-	<section class="mt-6">
-		{#if exportError}
-			<div
-				class="mb-4 flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700"
+	{#if exportError}
+		<div
+			class="mb-4 flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700"
+		>
+			<p>{exportError}</p>
+			<button
+				type="button"
+				class="shrink-0 rounded-md p-1 text-red-400 hover:bg-red-100 hover:text-red-700"
+				aria-label="Dismiss"
+				onclick={() => (exportError = '')}
 			>
-				<p>{exportError}</p>
-				<button
-					type="button"
-					class="shrink-0 rounded-md p-1 text-red-400 hover:bg-red-100 hover:text-red-700"
-					aria-label="Dismiss"
-					onclick={() => (exportError = '')}
-				>
-					<X size={14} />
-				</button>
-			</div>
-		{/if}
+				<X size={14} />
+			</button>
+		</div>
+	{/if}
+
+	{#if view === 'board'}
+	<section class="mt-6">
 		<div class="mb-3 flex flex-wrap items-center gap-2">
 			<div class="relative w-full sm:max-w-xs">
 				<span
@@ -2412,6 +2422,7 @@
 											onclick={(event) => {
 												event.stopPropagation();
 												deleteTaskTarget = task;
+												deleteError = '';
 											}}
 										>
 											<Trash2 size={13} />
@@ -2549,7 +2560,10 @@
 					{#if addingStatus === status}
 						<form
 							class="mt-2 space-y-2"
-							onsubmit={() => handleAdd(status)}
+							onsubmit={(event) => {
+								event.preventDefault();
+								handleAdd(status);
+							}}
 							autocomplete="off"
 						>
 							<input
@@ -2570,6 +2584,9 @@
 								]}
 							/>
 						</form>
+						{#if addTaskError}
+							<p class="mt-1.5 text-xs text-red-600">{addTaskError}</p>
+						{/if}
 					{/if}
 				</div>
 			{/each}
@@ -2845,16 +2862,24 @@
 	title="Delete task?"
 	message={`This will permanently delete "${deleteTaskTarget?.title ?? ''}".`}
 	confirmLabel="Delete task"
+	error={deleteError}
 	onConfirm={handleDeleteTask}
-	onCancel={() => (deleteTaskTarget = null)}
+	onCancel={() => {
+		deleteTaskTarget = null;
+		deleteError = '';
+	}}
 />
 <ConfirmDialog
 	open={deleteProjectOpen}
 	title="Delete project?"
 	message={`This will permanently delete "${project?.name ?? ''}" and all of its tasks.`}
 	confirmLabel="Delete project"
+	error={deleteError}
 	onConfirm={handleDeleteProject}
-	onCancel={() => (deleteProjectOpen = false)}
+	onCancel={() => {
+		deleteProjectOpen = false;
+		deleteError = '';
+	}}
 />
 
 {#if explainTarget}

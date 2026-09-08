@@ -937,7 +937,12 @@ export async function updateTask(
 	}
 }
 
-export async function moveTask(taskId: string, status: TaskStatus, index?: number): Promise<void> {
+export async function moveTask(
+	taskId: string,
+	status: TaskStatus,
+	index?: number,
+	audit?: { action: string; summary: string }
+): Promise<void> {
 	const database = requireDb();
 	const task = tasks.find((t) => t.id === taskId);
 	if (!task) return;
@@ -1015,8 +1020,9 @@ export async function moveTask(taskId: string, status: TaskStatus, index?: numbe
 	await logAudit(
 		'task',
 		taskId,
-		'moved',
-		`Moved "${task.title}" from ${taskStatusStyles[previous].label} to ${taskStatusStyles[status].label}`,
+		audit?.action ?? 'moved',
+		audit?.summary ??
+			`Moved "${task.title}" from ${taskStatusStyles[previous].label} to ${taskStatusStyles[status].label}`,
 		{
 			status: { from: previous, to: status },
 			...(due !== beforeDue ? { due: { from: beforeDue, to: due } } : {})
@@ -1024,27 +1030,20 @@ export async function moveTask(taskId: string, status: TaskStatus, index?: numbe
 	);
 }
 
+/**
+ * Toggles a task between "done" and "todo" (dashboard/task-list checkbox).
+ * Delegates to moveTask so sort-order renumbering and due-date restoration
+ * behave identically to dragging the task on the board - only the audit
+ * wording differs (completed/reopened, rather than a generic "moved").
+ */
 export async function toggleTaskDone(taskId: string): Promise<void> {
-	const database = requireDb();
 	const task = tasks.find((t) => t.id === taskId);
 	if (!task) return;
 	const wasDone = task.status === 'done';
-	const next = wasDone ? 'todo' : 'done';
-	const updatedAt = nowIso();
-	await database.execute('UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?', [
-		next,
-		updatedAt,
-		taskId
-	]);
-	task.status = next as TaskStatus;
-	task.updatedAt = updatedAt;
-	await logAudit(
-		'task',
-		taskId,
-		wasDone ? 'reopened' : 'completed',
-		wasDone ? `Reopened "${task.title}"` : `Completed "${task.title}"`,
-		{ status: { from: wasDone ? 'done' : 'todo', to: next } }
-	);
+	await moveTask(taskId, wasDone ? 'todo' : 'done', undefined, {
+		action: wasDone ? 'reopened' : 'completed',
+		summary: wasDone ? `Reopened "${task.title}"` : `Completed "${task.title}"`
+	});
 }
 
 export async function deleteTask(id: string): Promise<void> {
