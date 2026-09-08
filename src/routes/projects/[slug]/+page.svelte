@@ -604,7 +604,10 @@
 
 	$effect(() => {
 		if (!project || !status.ready) return;
-		void explainedTaskIds;
+		// Depends only on project/status.ready. Reassigning explainedTaskIds
+		// below used to also be read by this same effect (`void
+		// explainedTaskIds`), which made every reassignment - including the
+		// one this effect itself performs - re-trigger it, looping forever.
 		loadTaskExplanationIds(project.id)
 			.then((ids) => {
 				explainedTaskIds = new Set(ids);
@@ -844,6 +847,7 @@
 		explainBusy = true;
 		const abort = new AbortController();
 		explainAbort = abort;
+		let succeeded = false;
 		try {
 			const repo = await ensureRepoContext(task);
 			const text = await taskChatFollowUp({
@@ -858,6 +862,7 @@
 			explainPending = '';
 			await saveTaskExplanation(task.id, explainMessages);
 			markExplained(task.id);
+			succeeded = true;
 		} catch (err) {
 			if (abort.signal.aborted) {
 				explainPending = '';
@@ -868,9 +873,12 @@
 		} finally {
 			explainBusy = false;
 			explainAbort = null;
-			// Answer any questions that were queued while this one was streaming.
-			void answerNext();
 		}
+		// Answer any questions that were queued while this one was streaming -
+		// but only after a successful answer. A failure must surface the error
+		// and wait for the user to retry, not loop straight back into another
+		// attempt at the same failing question.
+		if (succeeded) void answerNext();
 	}
 
 	/** Aborts the in-flight response and drops queued (unanswered) questions so
@@ -901,6 +909,48 @@
 		document.body.style.overflow = 'hidden';
 		return () => {
 			document.body.style.overflow = previous;
+		};
+	});
+
+	let explainDialogEl = $state<HTMLDivElement | null>(null);
+
+	/** Cycles Tab/Shift+Tab between the dialog's own focusable elements so
+	 *  keyboard focus can't wander into the page behind it. */
+	function trapExplainFocus(event: KeyboardEvent) {
+		if (event.key !== 'Tab' || !explainDialogEl) return;
+		const focusable = explainDialogEl.querySelectorAll<HTMLElement>(
+			'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+		);
+		if (focusable.length === 0) return;
+		const first = focusable[0];
+		const last = focusable[focusable.length - 1];
+		if (event.shiftKey && document.activeElement === first) {
+			event.preventDefault();
+			last.focus();
+		} else if (!event.shiftKey && document.activeElement === last) {
+			event.preventDefault();
+			first.focus();
+		}
+	}
+
+	// Escape closes the modal; focus moves into it on open and back to
+	// whatever had focus beforehand on close, matching ConfirmDialog's
+	// pattern (this modal previously had neither).
+	$effect(() => {
+		if (!explainTarget) return;
+		const previouslyFocused = document.activeElement as HTMLElement | null;
+		const onKey = (event: KeyboardEvent) => {
+			if (event.key === 'Escape') {
+				closeExplain();
+				return;
+			}
+			trapExplainFocus(event);
+		};
+		window.addEventListener('keydown', onKey);
+		explainDialogEl?.focus();
+		return () => {
+			window.removeEventListener('keydown', onKey);
+			previouslyFocused?.focus?.();
 		};
 	});
 
@@ -2975,7 +3025,9 @@
 		<!-- Deliberately no click handler: the modal only closes via ✕. -->
 		<div class="absolute inset-0 bg-overlay" role="presentation"></div>
 		<div
-			class="relative flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-neutral-200"
+			bind:this={explainDialogEl}
+			tabindex="-1"
+			class="relative flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-neutral-200 focus:outline-none"
 			role="dialog"
 			aria-modal="true"
 			aria-label="Explain task"

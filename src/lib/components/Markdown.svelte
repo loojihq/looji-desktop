@@ -7,13 +7,35 @@
 
 	marked.setOptions({ gfm: true, breaks: false });
 
+	// A streaming reply can append many deltas per second; re-parsing and
+	// re-sanitizing the *entire* accumulated text on every single one is
+	// O(n) work per token (O(n^2) over a full reply) and visibly stutters
+	// long replies. Batch to at most once per animation frame: renderedText
+	// starts equal to the initial text (so a static/already-complete string
+	// still renders immediately, with no throttling delay), and only
+	// catches up to further changes on the next frame.
+	// svelte-ignore state_referenced_locally -- deliberate: only the initial
+	// value should seed this; later changes are meant to go through the
+	// throttled $effect below, not track `text` directly.
+	let renderedText = $state(text);
+	let rafScheduled = false;
+	$effect(() => {
+		void text;
+		if (rafScheduled) return;
+		rafScheduled = true;
+		requestAnimationFrame(() => {
+			rafScheduled = false;
+			renderedText = text;
+		});
+	});
+
 	// The model replies in markdown; render it (sanitized) with prose typography.
 	// In an SSR build there is no DOM, so sanitization is skipped there (this
 	// component only ever renders client-side anyway).
 	const html = $derived(
 		typeof window === 'undefined'
-			? (marked.parse(text, { async: false }) as string)
-			: DOMPurify.sanitize(marked.parse(text, { async: false }) as string)
+			? (marked.parse(renderedText, { async: false }) as string)
+			: DOMPurify.sanitize(marked.parse(renderedText, { async: false }) as string)
 	);
 
 	const COPY_ICON =
