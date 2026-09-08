@@ -3,6 +3,7 @@
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import Select from '$lib/components/Select.svelte';
 	import { PROVIDER_PRESETS, fetchProviderModels, testProviderConnection } from '$lib/ai';
+	import { detectClaudeCode, type ClaudeCodeDetection } from '$lib/claudeCode';
 	import { settings, updateSetting } from '$lib/store.svelte';
 	import type { AiProvider, AiProviderKind } from '$lib/types';
 
@@ -14,7 +15,8 @@
 		openai: 'OpenAI',
 		anthropic: 'Anthropic',
 		ollama: 'Ollama',
-		'openai-compatible': 'Custom (OpenAI-compatible)'
+		'openai-compatible': 'Custom (OpenAI-compatible)',
+		'claude-code': 'Claude Code (local CLI)'
 	};
 	const KIND_OPTIONS = (Object.keys(KIND_LABELS) as AiProviderKind[]).map((k) => ({
 		value: k,
@@ -36,6 +38,26 @@
 	let deleteTarget = $state<AiProvider | null>(null);
 	let deleteError = $state('');
 
+	let claudeCodeDetection = $state<ClaudeCodeDetection | null>(null);
+	let claudeCodeDetecting = $state(false);
+
+	async function runClaudeCodeDetection() {
+		claudeCodeDetecting = true;
+		try {
+			claudeCodeDetection = await detectClaudeCode();
+		} finally {
+			claudeCodeDetecting = false;
+		}
+	}
+
+	// Detect as soon as the form is showing the Claude Code kind - on open
+	// with that preset, or when the user switches to it.
+	$effect(() => {
+		if (providerFormOpen && formKind === 'claude-code' && !claudeCodeDetecting && !claudeCodeDetection) {
+			void runClaudeCodeDetection();
+		}
+	});
+
 	// The current model is always selectable, even if it's no longer in the
 	// fetched list.
 	const modelOptions = $derived(
@@ -53,6 +75,7 @@
 		formModels = [];
 		formTestResult = null;
 		modelsFetchedFor = '';
+		claudeCodeDetection = null;
 	}
 
 	function openAddProvider() {
@@ -77,6 +100,7 @@
 		// Already has a cached model list for this exact config - don't
 		// immediately re-fetch until something actually changes.
 		modelsFetchedFor = draftFingerprint();
+		claudeCodeDetection = null;
 		providerFormOpen = true;
 	}
 
@@ -149,17 +173,21 @@
 	});
 
 	async function saveProvider() {
-		if (!formBaseUrl.trim()) {
-			formError = 'Base URL is required.';
-			return;
-		}
-		if (PROVIDER_PRESETS[formKind].needsKey && !formApiKey.trim()) {
-			formError = 'An API key is required for this provider.';
-			return;
-		}
-		if (!formModel.trim()) {
-			formError = 'Choose or enter a model.';
-			return;
+		// Claude Code has no base URL/key/model to fill in - it spawns a local
+		// process and uses whatever it's already signed into.
+		if (formKind !== 'claude-code') {
+			if (!formBaseUrl.trim()) {
+				formError = 'Base URL is required.';
+				return;
+			}
+			if (PROVIDER_PRESETS[formKind].needsKey && !formApiKey.trim()) {
+				formError = 'An API key is required for this provider.';
+				return;
+			}
+			if (!formModel.trim()) {
+				formError = 'Choose or enter a model.';
+				return;
+			}
 		}
 		formError = '';
 		const provider = draftProvider();
@@ -254,8 +282,9 @@
 					<div>
 						<h2 class="font-semibold tracking-tight text-neutral-900">AI providers</h2>
 						<p class="mt-1 text-sm text-neutral-500">
-							Connect an OpenAI, Anthropic, Ollama or any OpenAI-compatible provider (DeepSeek,
-							Groq, OpenRouter, …) to generate project plans, explain tasks and chat about them.
+							Connect an OpenAI, Anthropic, Ollama, any OpenAI-compatible provider (DeepSeek,
+							Groq, OpenRouter, …), or a local Claude Code CLI to generate project plans, explain
+							tasks and chat about them.
 						</p>
 					</div>
 					{#if !providerFormOpen}
@@ -305,7 +334,9 @@
 										{/if}
 									</div>
 									<p class="mt-0.5 truncate text-xs text-neutral-400">
-										{provider.baseUrl} · {provider.model}
+										{provider.kind === 'claude-code'
+											? 'Local Claude Code CLI - uses your Pro/Max subscription'
+											: `${provider.baseUrl} · ${provider.model}`}
 									</p>
 								</div>
 								<div class="flex shrink-0 items-center gap-1">
@@ -378,54 +409,90 @@
 									bind:value={formLabel}
 								/>
 							</div>
-							<div class="sm:col-span-2">
-								<label
-									for="provider-base-url"
-									class="mb-1 block text-xs font-medium text-neutral-600"
-								>
-									Base URL
-								</label>
-								<input
-									id="provider-base-url"
-									type="text"
-									autocomplete="off"
-									placeholder="https://…"
-									class="w-full rounded-lg border-neutral-300 bg-white font-mono text-xs focus:border-indigo-500 focus:ring-indigo-500"
-									bind:value={formBaseUrl}
-								/>
-							</div>
-							<div>
-								<label for="provider-key" class="mb-1 block text-xs font-medium text-neutral-600">
-									API key
-									{#if !PROVIDER_PRESETS[formKind].needsKey}
-										<span class="font-normal text-neutral-400">(optional)</span>
-									{/if}
-								</label>
-								<input
-									id="provider-key"
-									type="password"
-									autocomplete="off"
-									placeholder={PROVIDER_PRESETS[formKind].needsKey ? 'sk-…' : 'Not required for local Ollama'}
-									class="w-full rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
-									bind:value={formApiKey}
-								/>
-							</div>
-							<div>
-								<label for="provider-model" class="mb-1 block text-xs font-medium text-neutral-600">
-									Model
-								</label>
-								<Select
-									id="provider-model"
-									class="w-full"
-									bind:value={formModel}
-									options={modelOptions}
-									placeholder={formLoadingModels
-										? 'Loading available models…'
-										: PROVIDER_PRESETS[formKind].needsKey && !formApiKey.trim()
-											? 'Add an API key to load models'
-											: 'Select a model'}
-								/>
-							</div>
+							{#if formKind === 'claude-code'}
+								<div class="sm:col-span-2">
+									<p class="mb-1 text-xs font-medium text-neutral-600">Local setup</p>
+									<div
+										class="rounded-lg border px-3 py-2.5 text-sm {claudeCodeDetecting
+											? 'border-neutral-200 bg-white text-neutral-500'
+											: claudeCodeDetection?.available
+												? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+												: claudeCodeDetection
+													? 'border-amber-200 bg-amber-50 text-amber-700'
+													: 'border-neutral-200 bg-white text-neutral-500'}"
+									>
+										{#if claudeCodeDetecting}
+											Checking for Node.js…
+										{:else if claudeCodeDetection?.available}
+											Node.js found. Looji will spawn Claude Code's ACP bridge (<code
+												class="text-xs">npx @agentclientprotocol/claude-agent-acp</code
+											>) the first time you use this provider - that first run may take a
+											moment while it downloads.
+										{:else if claudeCodeDetection}
+											{claudeCodeDetection.reason}
+										{:else}
+											Not checked yet.
+										{/if}
+									</div>
+									<p class="mt-1.5 text-xs text-neutral-400">
+										Requires Node.js 20+, the Claude Code CLI (<code class="text-xs"
+											>npm install -g @anthropic-ai/claude-code</code
+										>) installed separately, and being signed in (<code class="text-xs"
+											>claude auth login</code
+										>) with your Claude Pro/Max subscription - not an API key. Uses whichever
+										model Claude Code defaults to.
+									</p>
+								</div>
+							{:else}
+								<div class="sm:col-span-2">
+									<label
+										for="provider-base-url"
+										class="mb-1 block text-xs font-medium text-neutral-600"
+									>
+										Base URL
+									</label>
+									<input
+										id="provider-base-url"
+										type="text"
+										autocomplete="off"
+										placeholder="https://…"
+										class="w-full rounded-lg border-neutral-300 bg-white font-mono text-xs focus:border-indigo-500 focus:ring-indigo-500"
+										bind:value={formBaseUrl}
+									/>
+								</div>
+								<div>
+									<label for="provider-key" class="mb-1 block text-xs font-medium text-neutral-600">
+										API key
+										{#if !PROVIDER_PRESETS[formKind].needsKey}
+											<span class="font-normal text-neutral-400">(optional)</span>
+										{/if}
+									</label>
+									<input
+										id="provider-key"
+										type="password"
+										autocomplete="off"
+										placeholder={PROVIDER_PRESETS[formKind].needsKey ? 'sk-…' : 'Not required for local Ollama'}
+										class="w-full rounded-lg border-neutral-300 bg-white text-sm focus:border-indigo-500 focus:ring-indigo-500"
+										bind:value={formApiKey}
+									/>
+								</div>
+								<div>
+									<label for="provider-model" class="mb-1 block text-xs font-medium text-neutral-600">
+										Model
+									</label>
+									<Select
+										id="provider-model"
+										class="w-full"
+										bind:value={formModel}
+										options={modelOptions}
+										placeholder={formLoadingModels
+											? 'Loading available models…'
+											: PROVIDER_PRESETS[formKind].needsKey && !formApiKey.trim()
+												? 'Add an API key to load models'
+												: 'Select a model'}
+									/>
+								</div>
+							{/if}
 						</div>
 						{#if formError}
 							<p class="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{formError}</p>

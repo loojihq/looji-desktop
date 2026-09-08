@@ -46,6 +46,25 @@
       "allow": [{ "path": "**" }]
     },
     "sql:default",
-    "sql:allow-execute"
+    "sql:allow-execute",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "node-version-check",
+          "cmd": "node",
+          "sidecar": false,
+          "args": ["--version"]
+        },
+        {
+          "name": "claude-code-acp-bridge",
+          "cmd": "npx",
+          "sidecar": false,
+          "args": ["-y", "@agentclientprotocol/claude-agent-acp"]
+        }
+      ]
+    },
+    "shell:allow-stdin-write",
+    "shell:allow-kill"
   ]
 }

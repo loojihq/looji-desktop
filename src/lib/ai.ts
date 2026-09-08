@@ -1,4 +1,5 @@
 import { fetch } from '@tauri-apps/plugin-http';
+import { runClaudeCodeTurn } from './claudeCode';
 import type { AiDraft, AiDraftTask, AiProvider, AiProviderKind, Priority } from './types';
 
 const PRIORITIES: Priority[] = ['urgent', 'high', 'medium', 'low'];
@@ -12,7 +13,8 @@ const ANTHROPIC_MAX_TOKENS = 8192;
  * Sensible starting point when adding a new provider of a given kind.
  * Deliberately has no default `model` - model lineups change over time, and
  * a hardcoded guess would go stale. The actual model list is always fetched
- * live from the provider once enough of the form is filled in.
+ * live from the provider once enough of the form is filled in (except
+ * 'claude-code', which has no base URL/key at all - see claudeCode.ts).
  */
 export const PROVIDER_PRESETS: Record<
 	AiProviderKind,
@@ -25,7 +27,8 @@ export const PROVIDER_PRESETS: Record<
 		label: 'Custom (OpenAI-compatible)',
 		baseUrl: 'https://api.deepseek.com',
 		needsKey: true
-	}
+	},
+	'claude-code': { label: 'Claude Code (local CLI)', baseUrl: '', needsKey: false }
 };
 
 type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string };
@@ -308,6 +311,12 @@ async function streamChatAnthropic(
 // ---------------------------------------------------------------------------
 
 async function chat(provider: AiProvider, messages: ChatMessage[], json: boolean): Promise<ChatResult> {
+	if (provider.kind === 'claude-code') {
+		// No distinct non-streaming path - Claude Code always streams over
+		// ACP; just discard the deltas and return the assembled text.
+		const content = await runClaudeCodeTurn(messages, () => {});
+		return { content, finishReason: 'stop' };
+	}
 	if (provider.kind === 'anthropic') return chatAnthropic(provider, messages);
 	return chatOpenAI(provider, messages, json);
 }
@@ -318,6 +327,10 @@ async function streamChat(
 	onDelta: (delta: string) => void,
 	signal?: AbortSignal
 ): Promise<ChatResult> {
+	if (provider.kind === 'claude-code') {
+		const content = await runClaudeCodeTurn(messages, onDelta, signal);
+		return { content, finishReason: 'stop' };
+	}
 	if (provider.kind === 'anthropic') return streamChatAnthropic(provider, messages, onDelta, signal);
 	return streamChatOpenAI(provider, messages, onDelta, signal);
 }
@@ -824,6 +837,9 @@ function parseModelsList(data: unknown): string[] {
 
 /** Lists the models available to the given provider. */
 export async function fetchProviderModels(provider: AiProvider): Promise<string[]> {
+	// No live model listing over ACP (see claudeCode.ts) - Claude Code always
+	// uses its own default model for now.
+	if (provider.kind === 'claude-code') return [];
 	const isAnthropic = provider.kind === 'anthropic';
 	const response = await fetch(`${provider.baseUrl}/models`, {
 		method: 'GET',
