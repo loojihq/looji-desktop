@@ -46,6 +46,60 @@
       "allow": [{ "path": "**" }]
     },
     "sql:default",
-    "sql:allow-execute"
+    "sql:allow-execute",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "node-version-check",
+          "cmd": "node",
+          "sidecar": false,
+          "args": ["--version"]
+        },
+        {
+          "name": "claude-version-check",
+          "cmd": "claude",
+          "sidecar": false,
+          "args": ["--version"]
+        },
+        {
+          "name": "claude-version-check-windows",
+          "cmd": "claude.cmd",
+          "sidecar": false,
+          "args": ["--version"]
+        },
+        {
+          "name": "install-claude-code-cli",
+          "cmd": "npm",
+          "sidecar": false,
+          "args": ["install", "-g", "@anthropic-ai/claude-code"]
+        },
+        {
+          "name": "install-claude-code-cli-windows",
+          "cmd": "npm.cmd",
+          "sidecar": false,
+          "args": ["install", "-g", "@anthropic-ai/claude-code"]
+        }
+      ]
+    },
+    {
+      "identifier": "shell:allow-spawn",
+      "allow": [
+        {
+          "name": "claude-code-acp-bridge",
+          "cmd": "npx",
+          "sidecar": false,
+          "args": ["-y", "@agentclientprotocol/claude-agent-acp"]
+        },
+        {
+          "name": "claude-code-acp-bridge-windows",
+          "cmd": "npx.cmd",
+          "sidecar": false,
+          "args": ["-y", "@agentclientprotocol/claude-agent-acp"]
+        }
+      ]
+    },
+    "shell:allow-stdin-write",
+    "shell:allow-kill"
   ]
 }

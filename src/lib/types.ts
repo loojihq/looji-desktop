@@ -69,17 +69,22 @@ export type AuditEntry = {
  * endpoint. `openai-compatible` is a free-form escape hatch for anything
  * else that speaks the OpenAI chat-completions format - DeepSeek, Groq,
  * OpenRouter, LM Studio, etc. - via a user-supplied base URL.
+ * `claude-code` spawns a local Claude Code CLI (via an Agent Client Protocol
+ * bridge subprocess) and uses whatever Claude Pro/Max subscription the user
+ * is already signed into there - no API key, no per-token billing.
  */
-export type AiProviderKind = 'openai' | 'anthropic' | 'ollama' | 'openai-compatible';
+export type AiProviderKind = 'openai' | 'anthropic' | 'ollama' | 'openai-compatible' | 'claude-code';
 
 export type AiProvider = {
 	id: string;
 	kind: AiProviderKind;
 	/** User-facing name, e.g. "Work OpenAI", "Local Ollama". */
 	label: string;
+	/** Unused (kept '') for 'claude-code' - it spawns a local process, not an HTTP endpoint. */
 	baseUrl: string;
-	/** '' for providers that don't require one (typically Ollama). */
+	/** '' for providers that don't require one (Ollama, Claude Code). */
 	apiKey: string;
+	/** For 'claude-code', one of CLAUDE_CODE_MODEL_ALIASES, or '' for its own default. */
 	model: string;
 	/** Cached result of the last "fetch models" call, for the picker. */
 	models: string[];
