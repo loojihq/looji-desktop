@@ -76,7 +76,7 @@
 </script>
 
 <svelte:head>
-	<title>Team · Workmaster</title>
+	<title>Team · Looji</title>
 </svelte:head>
 
 <div class="mb-6 flex flex-wrap items-end justify-between gap-4">

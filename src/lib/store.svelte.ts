@@ -147,7 +147,7 @@ const DEFAULT_SETTINGS: Settings = {
 	boardStatuses: ['todo', 'in_progress', 'in_review', 'done']
 };
 
-export const settings = $state<Settings>({ ...DEFAULT_SETTINGS, workspaceName: 'Workmaster' });
+export const settings = $state<Settings>({ ...DEFAULT_SETTINGS, workspaceName: 'Looji' });
 
 function requireDb(): Database {
 	if (!db) throw new Error('Store not initialised');
@@ -260,7 +260,7 @@ export function initStore(): Promise<void> {
 
 async function load(): Promise<void> {
 	try {
-		db = await Database.load('sqlite:workmaster.db');
+		db = await Database.load('sqlite:looji.db');
 		await refreshWorkspaces();
 		await refreshCurrentWorkspace();
 		await refreshAll();

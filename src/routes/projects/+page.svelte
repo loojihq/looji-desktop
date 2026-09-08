@@ -107,7 +107,7 @@
 </script>
 
 <svelte:head>
-	<title>Projects · Workmaster</title>
+	<title>Projects · Looji</title>
 </svelte:head>
 
 <div class="mb-6 flex flex-wrap items-end justify-between gap-4">

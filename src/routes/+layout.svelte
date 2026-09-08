@@ -66,7 +66,7 @@
 				>
 					<Menu size={20} />
 				</button>
-				<span class="font-semibold tracking-tight text-neutral-900">Workmaster</span>
+				<span class="font-semibold tracking-tight text-neutral-900">Looji</span>
 			</header>
 
 			<div class="min-h-0 w-full flex-1 pl-1 pt-1 pb-1 sm:pl-1.5 sm:pt-1.5 sm:pb-1.5">
@@ -85,11 +85,11 @@
 					<div transition:fade={{ duration: 200 }} class="flex flex-col items-center justify-center py-32">
 						<img
 							src="/app-icon.png"
-							alt="Workmaster"
+							alt="Looji"
 							draggable="false"
 							class="size-16 rounded-2xl shadow-lg shadow-neutral-900/15"
 						/>
-						<p class="mt-4 text-sm font-semibold text-neutral-700">Workmaster</p>
+						<p class="mt-4 text-sm font-semibold text-neutral-700">Looji</p>
 						<p class="mt-1 text-xs text-neutral-400">Loading workspace</p>
 						<div class="mt-4 flex items-center gap-1">
 							<span class="size-1.5 animate-pulse rounded-full bg-indigo-400"></span>

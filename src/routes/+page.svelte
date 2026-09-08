@@ -115,7 +115,7 @@
 </script>
 
 <svelte:head>
-	<title>Dashboard · Workmaster</title>
+	<title>Dashboard · Looji</title>
 </svelte:head>
 
 <div class="mb-8 flex flex-wrap items-end justify-between gap-4">

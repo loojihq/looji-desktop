@@ -200,7 +200,7 @@
 </script>
 
 <svelte:head>
-	<title>Settings · Workmaster</title>
+	<title>Settings · Looji</title>
 </svelte:head>
 
 <div class="mb-6">
@@ -228,7 +228,7 @@
 		{#if section === 'Appearance'}
 			<section class="rounded-xl border border-neutral-200 bg-surface p-6 shadow-xs">
 				<h2 class="font-semibold tracking-tight text-neutral-900">Appearance</h2>
-				<p class="mt-1 text-sm text-neutral-500">Choose how Workmaster looks.</p>
+				<p class="mt-1 text-sm text-neutral-500">Choose how Looji looks.</p>
 
 				<div class="mt-6">
 					<p class="text-xs font-medium text-neutral-600">Theme</p>
