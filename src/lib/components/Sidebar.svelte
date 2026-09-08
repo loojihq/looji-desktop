@@ -118,13 +118,19 @@
 	}
 
 	async function saveCreate() {
+		switchBusy = true;
 		try {
 			await createWorkspace(newName, { icon: newIcon });
 			creating = false;
 			newName = '';
 			switcherOpen = false;
+			// createWorkspace switches into the new (empty) workspace, so land
+			// on the dashboard - a project-detail page may not exist there.
+			await goto('/');
 		} catch (err) {
 			wsError = err instanceof Error ? err.message : String(err);
+		} finally {
+			switchBusy = false;
 		}
 	}
 
@@ -182,13 +188,20 @@
 
 	async function doDelete() {
 		if (!deleteTarget) return;
+		const wasCurrent = deleteTarget.id === currentWorkspaceState.id;
+		switchBusy = true;
 		try {
 			await deleteWorkspace(deleteTarget.id);
 			deleteTarget = null;
 			switcherOpen = false;
+			// Only the current workspace's deletion switches us elsewhere -
+			// deleting a different one doesn't touch what's on screen.
+			if (wasCurrent) await goto('/');
 		} catch (err) {
 			wsError = err instanceof Error ? err.message : String(err);
 			deleteTarget = null;
+		} finally {
+			switchBusy = false;
 		}
 	}
 </script>
@@ -201,7 +214,7 @@
 				type="button"
 				onclick={() => (switcherOpen ? (switcherOpen = false) : openSwitcher())}
 				class="flex w-full items-center gap-2.5 rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2.5 text-left transition-colors hover:bg-neutral-100"
-				aria-haspopup="menu"
+				aria-haspopup="true"
 				aria-expanded={switcherOpen}
 			>
 				<WorkspaceTile
@@ -223,9 +236,10 @@
 			{#if switcherOpen}
 				<div
 					class="absolute inset-x-0 top-full z-50 mt-1.5 rounded-xl border border-neutral-200 bg-white p-1.5 shadow-xl"
-					role="menu"
+					aria-labelledby="workspace-switcher-label"
 				>
 					<p
+						id="workspace-switcher-label"
 						class="px-2.5 pt-1.5 pb-1 text-[10px] font-semibold tracking-widest text-neutral-400 uppercase"
 					>
 						Switch workspace
@@ -332,17 +346,19 @@
 									{#if workspaces.length > 1}
 										<button
 											type="button"
-											class="shrink-0 rounded-md p-1 text-neutral-300 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-neutral-100 hover:text-neutral-600 focus-visible:opacity-100"
+											class="shrink-0 rounded-md p-1 text-neutral-300 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-neutral-100 hover:text-neutral-600 focus-visible:opacity-100 disabled:cursor-not-allowed disabled:opacity-0"
 											aria-label="Edit {workspace.name}"
 											onclick={() => beginRename(workspace)}
+											disabled={switchBusy}
 										>
 											<Pencil size={13} />
 										</button>
 										<button
 											type="button"
-											class="shrink-0 rounded-md p-1 text-neutral-300 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-red-50 hover:text-red-600 focus-visible:opacity-100"
+											class="shrink-0 rounded-md p-1 text-neutral-300 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-red-50 hover:text-red-600 focus-visible:opacity-100 disabled:cursor-not-allowed disabled:opacity-0"
 											aria-label="Delete {workspace.name}"
 											onclick={() => (deleteTarget = workspace)}
+											disabled={switchBusy}
 										>
 											<Trash2 size={13} />
 										</button>
@@ -421,8 +437,9 @@
 						{:else}
 							<button
 								type="button"
-								class="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium text-indigo-600 transition-colors hover:bg-indigo-50"
+								class="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium text-indigo-600 transition-colors hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-50"
 								onclick={beginCreate}
+								disabled={switchBusy}
 							>
 								<Plus size={14} />
 								New workspace
