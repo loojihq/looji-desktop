@@ -106,6 +106,6 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: 'Workmaster ${{ github.ref_name }}'
           releaseBody: 'Release ${{ github.ref_name }} of Workmaster. Download the installer for your platform from the assets below. The update system picks this release up automatically.'
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}

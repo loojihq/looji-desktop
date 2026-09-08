@@ -66,12 +66,7 @@ export type AuditEntry = {
 export type Settings = {
 	theme: 'light' | 'dark' | 'system';
 	autoEscalate: boolean;
-	notifAssignments: boolean;
-	notifDigest: boolean;
-	notifMentions: boolean;
-	notifProduct: boolean;
 	workspaceName: string;
-	timezone: string;
 	aiApiKey: string;
 	aiModel: string;
 	aiModels: string[];
@@ -102,7 +97,7 @@ export type SavedAiDraft = {
 	specialty: Record<string, string>;
 };
 
-export type EntityType = 'project' | 'task' | 'member' | 'settings' | 'activity';
+export type EntityType = 'project' | 'task' | 'member' | 'settings' | 'workspace' | 'activity';
 
 export type Activity = {
 	id: string;

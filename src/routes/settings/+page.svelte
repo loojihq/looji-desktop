@@ -191,33 +191,9 @@
 		{:else}
 			<section class="rounded-xl border border-neutral-200 bg-surface p-6 shadow-xs">
 				<h2 class="font-semibold tracking-tight text-neutral-900">General</h2>
-				<p class="mt-1 text-sm text-neutral-500">Time zone and automation preferences.</p>
+				<p class="mt-1 text-sm text-neutral-500">Automation preferences.</p>
 
-				<div class="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
-					<div>
-						<label for="workspace-tz" class="mb-1 block text-xs font-medium text-neutral-600">
-							Time zone
-						</label>
-						<Select
-							id="workspace-tz"
-							class="w-full"
-							bind:value={settings.timezone}
-							onchange={(v) => updateSetting('timezone', v)}
-							options={[
-								{ value: 'America/Los_Angeles', label: 'Pacific Time (US)' },
-								{ value: 'America/New_York', label: 'Eastern Time (US)' },
-								{ value: 'Europe/London', label: 'London' },
-								{ value: 'Europe/Berlin', label: 'Berlin' },
-								{ value: 'Asia/Tokyo', label: 'Tokyo' }
-							]}
-						/>
-						<p class="mt-1 text-xs text-neutral-400">
-							Used for due-date calculations and date display.
-						</p>
-					</div>
-				</div>
-
-				<div class="mt-6 border-t border-neutral-100 pt-5">
+				<div class="mt-6">
 					<div class="flex items-center justify-between gap-4">
 						<div>
 							<p class="text-sm font-medium text-neutral-800">Overdue escalation</p>

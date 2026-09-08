@@ -3,12 +3,15 @@
 	import { auditLog } from '$lib/store.svelte';
 	import { relativeTime } from '$lib/utils';
 
-	let entityFilter = $state<'all' | 'project' | 'task' | 'member' | 'settings'>('all');
+	let entityFilter = $state<'all' | 'project' | 'task' | 'member' | 'workspace' | 'settings'>(
+		'all'
+	);
 
 	const entityStyles: Record<string, { label: string; chip: string }> = {
 		project: { label: 'Project', chip: 'bg-indigo-50 text-indigo-700' },
 		task: { label: 'Task', chip: 'bg-sky-50 text-sky-700' },
 		member: { label: 'Member', chip: 'bg-emerald-50 text-emerald-700' },
+		workspace: { label: 'Workspace', chip: 'bg-violet-50 text-violet-700' },
 		settings: { label: 'Settings', chip: 'bg-neutral-100 text-neutral-600' },
 		activity: { label: 'System', chip: 'bg-neutral-100 text-neutral-600' }
 	};
@@ -29,6 +32,7 @@
 		{ value: 'project', label: 'Projects', count: auditLog.filter((a) => a.entityType === 'project').length },
 		{ value: 'task', label: 'Tasks', count: auditLog.filter((a) => a.entityType === 'task').length },
 		{ value: 'member', label: 'Members', count: auditLog.filter((a) => a.entityType === 'member').length },
+		{ value: 'workspace', label: 'Workspaces', count: auditLog.filter((a) => a.entityType === 'workspace').length },
 		{ value: 'settings', label: 'Settings', count: auditLog.filter((a) => a.entityType === 'settings').length }
 	] as const);
 

@@ -135,26 +135,12 @@ export const auditLog = $state<AuditEntry[]>([]);
 export const status = $state({ ready: false, error: null as string | null });
 
 /** Settings keys that live per workspace (everything data-related). */
-const WORKSPACE_SETTING_KEYS = new Set([
-	'workspaceName',
-	'timezone',
-	'boardStatuses',
-	'autoEscalate',
-	'notifAssignments',
-	'notifDigest',
-	'notifMentions',
-	'notifProduct'
-]);
+const WORKSPACE_SETTING_KEYS = new Set(['workspaceName', 'boardStatuses', 'autoEscalate']);
 
 const DEFAULT_SETTINGS: Settings = {
 	theme: 'system',
 	autoEscalate: true,
-	notifAssignments: true,
-	notifDigest: true,
-	notifMentions: true,
-	notifProduct: false,
 	workspaceName: 'My workspace',
-	timezone: 'America/Los_Angeles',
 	aiApiKey: '',
 	aiModel: 'deepseek-chat',
 	aiModels: [],
@@ -469,7 +455,7 @@ export async function updateSetting<K extends keyof Settings>(key: K, value: Set
 		const ws = workspaces.find((w) => w.id === currentWorkspaceState.id);
 		if (ws) ws.name = String(value);
 	}
-	if (key === 'workspaceName' || key === 'timezone' || key === 'theme') {
+	if (key === 'workspaceName' || key === 'theme') {
 		await logAudit('settings', key, 'updated', `Changed setting "${key}" to ${String(value)}`, {
 			[key]: { from: previous, to: value }
 		});
