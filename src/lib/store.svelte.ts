@@ -15,7 +15,7 @@ import type {
 	TaskStatus,
 	Workspace
 } from './types';
-import { addWorkingHours, daysFromNow, minutesToTime } from './utils';
+import { addWorkingHours, daysFromNow, minutesToTime, uniqueSlug } from './utils';
 
 type MemberRow = {
 	id: string;
@@ -404,13 +404,6 @@ export function projectProgress(projectId: string): number {
 	return Math.round((done / projectTasks.length) * 100);
 }
 
-function slugify(name: string): string {
-	return name
-		.toLowerCase()
-		.replace(/[^a-z0-9]+/g, '-')
-		.replace(/(^-|-$)/g, '');
-}
-
 async function logAudit(
 	entityType: string,
 	entityId: string,
@@ -537,9 +530,36 @@ export async function deleteWorkspace(id: string): Promise<void> {
 	}
 	const workspace = workspaces.find((w) => w.id === id);
 	if (!workspace) return;
-	await database.execute('DELETE FROM projects WHERE workspace_id = ?', [id]); // tasks cascade
+	// SQLite never enforces `ON DELETE CASCADE` here (this app doesn't set
+	// `PRAGMA foreign_keys = ON`), so every table that hangs off this
+	// workspace's projects/tasks has to be cleaned up explicitly - deleting
+	// `projects` alone would silently orphan all of these rows forever.
+	await database.execute(
+		`DELETE FROM task_explanations WHERE task_id IN (
+			SELECT id FROM tasks WHERE project_id IN (SELECT id FROM projects WHERE workspace_id = ?)
+		)`,
+		[id]
+	);
+	await database.execute(
+		'DELETE FROM ai_drafts WHERE project_id IN (SELECT id FROM projects WHERE workspace_id = ?)',
+		[id]
+	);
+	await database.execute(
+		'DELETE FROM repo_index WHERE project_id IN (SELECT id FROM projects WHERE workspace_id = ?)',
+		[id]
+	);
+	await database.execute(
+		'DELETE FROM project_members WHERE project_id IN (SELECT id FROM projects WHERE workspace_id = ?)',
+		[id]
+	);
+	await database.execute(
+		'DELETE FROM tasks WHERE project_id IN (SELECT id FROM projects WHERE workspace_id = ?)',
+		[id]
+	);
+	await database.execute('DELETE FROM projects WHERE workspace_id = ?', [id]);
 	await database.execute('DELETE FROM members WHERE workspace_id = ?', [id]);
 	await database.execute('DELETE FROM workspace_settings WHERE workspace_id = ?', [id]);
+	await database.execute('DELETE FROM audit_log WHERE workspace_id = ?', [id]);
 	await database.execute('DELETE FROM workspaces WHERE id = ?', [id]);
 	workspaces.splice(workspaces.indexOf(workspace), 1);
 	if (currentWorkspaceState.id === id) {
@@ -656,7 +676,10 @@ export async function createProject(input: {
 	}
 	const project: Project = {
 		id: newId(),
-		slug: slugify(name),
+		slug: uniqueSlug(
+			name,
+			projects.map((p) => p.slug)
+		),
 		name,
 		description: input.description?.trim() ?? '',
 		status: input.status ?? 'planning',
@@ -774,6 +797,16 @@ export async function deleteProject(id: string): Promise<void> {
 	const project = projects.find((p) => p.id === id);
 	if (!project) return;
 	const database = requireDb();
+	// SQLite's ON DELETE CASCADE (declared on these tables' foreign keys) only
+	// applies when `PRAGMA foreign_keys = ON`, which this app never sets - so
+	// these rows must be cleaned up explicitly, same as tasks/project_members
+	// below, or they'd orphan permanently.
+	await database.execute(
+		'DELETE FROM task_explanations WHERE task_id IN (SELECT id FROM tasks WHERE project_id = ?)',
+		[id]
+	);
+	await database.execute('DELETE FROM ai_drafts WHERE project_id = ?', [id]);
+	await database.execute('DELETE FROM repo_index WHERE project_id = ?', [id]);
 	await database.execute('DELETE FROM tasks WHERE project_id = ?', [id]);
 	await database.execute('DELETE FROM project_members WHERE project_id = ?', [id]);
 	await database.execute('DELETE FROM projects WHERE id = ?', [id]);
@@ -1032,6 +1065,7 @@ export async function deleteTask(id: string): Promise<void> {
 	const task = tasks.find((t) => t.id === id);
 	if (!task) return;
 	const database = requireDb();
+	await database.execute('DELETE FROM task_explanations WHERE task_id = ?', [id]);
 	await database.execute('DELETE FROM tasks WHERE id = ?', [id]);
 	tasks.splice(tasks.indexOf(task), 1);
 	await logAudit('task', id, 'deleted', `Deleted task "${task.title}"`, {});
