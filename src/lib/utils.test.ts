@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addWorkingHours, slugify, uniqueSlug } from './utils';
+import { addWorkingHours, foldedBoardGroup, resolveVisualDropIndex, slugify, uniqueSlug } from './utils';
 
 // Monday 2024-01-01 09:00 local time. Working hours: 09:00-17:00 (540-1020),
 // Mon-Fri (1-5), matching the app's defaults.
@@ -106,5 +106,72 @@ describe('slugify', () => {
 	it('lowercases and hyphenates, trimming leading/trailing separators', () => {
 		expect(slugify('  Hello World!  ')).toBe('hello-world');
 		expect(slugify('A/B Testing')).toBe('a-b-testing');
+	});
+});
+
+describe('foldedBoardGroup', () => {
+	it('folds backlog into "to do" only when the backlog column is hidden', () => {
+		expect(foldedBoardGroup('todo', ['todo', 'in_progress', 'done'])).toEqual([
+			'todo',
+			'backlog'
+		]);
+		expect(foldedBoardGroup('todo', ['backlog', 'todo', 'in_progress', 'done'])).toEqual([
+			'todo'
+		]);
+	});
+
+	it('folds in_review into "in progress" only when the in_review column is hidden', () => {
+		expect(foldedBoardGroup('in_progress', ['todo', 'in_progress', 'done'])).toEqual([
+			'in_progress',
+			'in_review'
+		]);
+		expect(
+			foldedBoardGroup('in_progress', ['todo', 'in_progress', 'in_review', 'done'])
+		).toEqual(['in_progress']);
+	});
+
+	it('never folds anything into columns other than todo/in_progress', () => {
+		expect(foldedBoardGroup('done', [])).toEqual(['done']);
+	});
+});
+
+describe('resolveVisualDropIndex', () => {
+	type Item = { id: string; status: string };
+	const a: Item = { id: 'a', status: 'todo' };
+	const b: Item = { id: 'b', status: 'todo' };
+	const c: Item = { id: 'c', status: 'todo' };
+
+	it('excludes the dragged item from the count (no off-by-one)', () => {
+		// [A, B(dragged), C] - dropping "before A" should be index 0 whether or
+		// not B is still sitting in the list at its own slot.
+		expect(resolveVisualDropIndex([a, b, c], 'b', 'todo', 0)).toBe(0);
+	});
+
+	it('treats a drop back at the dragged item\'s own slot as a true no-op position', () => {
+		// Dropping B between A and C (its original spot) must resolve to the
+		// same index moveTask already has it at (1), not shift it.
+		expect(resolveVisualDropIndex([a, b, c], 'b', 'todo', 1)).toBe(1);
+	});
+
+	it('resolves "drop past everything" correctly regardless of dragged item position', () => {
+		expect(resolveVisualDropIndex([a, b, c], 'b', 'todo', 3)).toBe(2);
+		expect(resolveVisualDropIndex([a, b, c], 'b', 'todo', -1)).toBe(2);
+	});
+
+	it('only counts items matching the resolved target status (folded-group case)', () => {
+		// Merged "To do" column: two real todo tasks, then two folded backlog
+		// tasks. Reordering a backlog task must count only among backlog items.
+		const t1: Item = { id: 't1', status: 'todo' };
+		const t2: Item = { id: 't2', status: 'todo' };
+		const k1: Item = { id: 'k1', status: 'backlog' };
+		const k2: Item = { id: 'k2', status: 'backlog' };
+		const merged = [t1, t2, k1, k2];
+
+		// Dragging k1 past everything (visual index 4, i.e. append) should land
+		// it after k2 within the backlog-only sequence (index 1), not among the
+		// todo items.
+		expect(resolveVisualDropIndex(merged, 'k1', 'backlog', 4)).toBe(1);
+		// Dragging k1 back to right before k2 (its original spot) is a no-op.
+		expect(resolveVisualDropIndex(merged, 'k1', 'backlog', 2)).toBe(0);
 	});
 });

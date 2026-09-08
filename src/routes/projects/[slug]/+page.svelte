@@ -64,11 +64,13 @@
 	import {
 		daysFromNow,
 		dueLabel,
+		foldedBoardGroup,
 		formatDate,
 		formatEstimate,
 		isOverdue,
 		minutesToTime,
 		relativeTime,
+		resolveVisualDropIndex,
 		timeToMinutes
 	} from '$lib/utils';
 
@@ -92,14 +94,14 @@
 	// Disabled statuses fold into their neighbours so no task ever disappears:
 	// backlog → To do, in_review → In progress. Folded tasks keep their own
 	// sequence and append after the visible status's cards.
+	/** Real task statuses shown together under a given board column. */
+	function foldedGroup(displayStatus: TaskStatus): TaskStatus[] {
+		return foldedBoardGroup(displayStatus, settings.boardStatuses) as TaskStatus[];
+	}
+
 	function tasksInColumn(status: TaskStatus) {
 		if (!project) return [];
-		const included =
-			status === 'todo' && !settings.boardStatuses.includes('backlog')
-				? ['todo', 'backlog']
-				: status === 'in_progress' && !settings.boardStatuses.includes('in_review')
-					? ['in_progress', 'in_review']
-					: [status];
+		const included = foldedGroup(status);
 		return tasks
 			.filter(
 				(task) =>
@@ -247,6 +249,9 @@
 			} else {
 				// Compute where inside the column the card would land: the index of
 				// the card whose midpoint the pointer is above, or the end otherwise.
+				// This index includes the dragged card's own (dimmed) tile, matching
+				// the inclusive `i` the template renders each card at - resolveDrop()
+				// below is what excludes it when translating to moveTask's index.
 				const cards = column.querySelectorAll<HTMLElement>('[data-task-id]');
 				let insertAt = cards.length;
 				for (let i = 0; i < cards.length; i++) {
@@ -266,6 +271,31 @@
 		}
 	}
 
+	/**
+	 * Translates a visual drop - the display column, and `visualIndex` within
+	 * its rendered card list (which still includes the dragged card's own
+	 * dimmed tile, same as the template's `i`) - into the real status/index
+	 * moveTask needs.
+	 *
+	 * Two adjustments happen here: (1) the dragged card's own slot is excluded
+	 * before counting, since moveTask's column list never contains it either
+	 * - counting it in would shift every position after it by one; (2) when
+	 * the target column folds a hidden status in (e.g. Backlog folded into
+	 * "To do"), reordering within the folded group must not silently
+	 * promote/demote the task's real status - only an actual cross-group drop
+	 * (dropped on a column outside its current folded group) should change it.
+	 */
+	function resolveDrop(
+		task: Task,
+		displayStatus: TaskStatus,
+		visualIndex: number
+	): { status: TaskStatus; index: number } {
+		const group = foldedGroup(displayStatus);
+		const status = group.includes(task.status) ? task.status : displayStatus;
+		const index = resolveVisualDropIndex(tasksInColumn(displayStatus), task.id, status, visualIndex);
+		return { status, index };
+	}
+
 	function onDragEnd() {
 		if (longPressTimer) {
 			clearTimeout(longPressTimer);
@@ -276,7 +306,8 @@
 			if (overStatus && dropColumn) {
 				const task = tasks.find((t) => t.id === taskId);
 				if (task) {
-					void moveTask(taskId, dropColumn, dropIndex >= 0 ? dropIndex : undefined);
+					const { status, index } = resolveDrop(task, dropColumn, dropIndex);
+					void moveTask(taskId, status, index);
 				}
 			}
 			suppressClick = true;

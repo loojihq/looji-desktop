@@ -19,6 +19,46 @@ export function uniqueSlug(name: string, taken: Iterable<string>): string {
 	return `${base}-${n}`;
 }
 
+/**
+ * Real task statuses that share a single board column when `displayStatus`'s
+ * neighbour is hidden from `boardStatuses` (e.g. Backlog folds into "To do"
+ * when the Backlog column is off).
+ */
+export function foldedBoardGroup(
+	displayStatus: string,
+	boardStatuses: string[]
+): string[] {
+	if (displayStatus === 'todo' && !boardStatuses.includes('backlog')) {
+		return ['todo', 'backlog'];
+	}
+	if (displayStatus === 'in_progress' && !boardStatuses.includes('in_review')) {
+		return ['in_progress', 'in_review'];
+	}
+	return [displayStatus];
+}
+
+/**
+ * Translates a visual drop position into the index moveTask expects.
+ *
+ * `items` is the full, ordered list the UI renders for the target column,
+ * *including* the dragged item at its own (dimmed) slot - the same list a
+ * `{#each items as item, i}` loop would index. `visualIndex` is that same
+ * inclusive index (or negative to mean "append at the end"). The result
+ * excludes the dragged item and counts only items that will end up sharing
+ * `targetStatus`, matching the exclusive, per-status list the store's
+ * `moveTask` builds internally.
+ */
+export function resolveVisualDropIndex<T extends { id: string; status: string }>(
+	items: T[],
+	draggedId: string,
+	targetStatus: string,
+	visualIndex: number
+): number {
+	const clamped = visualIndex < 0 ? items.length : Math.min(visualIndex, items.length);
+	return items.slice(0, clamped).filter((t) => t.id !== draggedId && t.status === targetStatus)
+		.length;
+}
+
 export function initials(name: string): string {
 	return name
 		.split(' ')
