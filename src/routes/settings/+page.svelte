@@ -36,8 +36,8 @@
 	let deleteTarget = $state<AiProvider | null>(null);
 	let deleteError = $state('');
 
-	// The current model is always selectable, even before "Fetch models" has
-	// run or if it's no longer in the fetched list.
+	// The current model is always selectable, even if it's no longer in the
+	// fetched list.
 	const modelOptions = $derived(
 		Array.from(new Set([...(formModel ? [formModel] : []), ...formModels])).map((m) => ({
 			value: m,
@@ -49,9 +49,10 @@
 		const preset = PROVIDER_PRESETS[kind];
 		formLabel = preset.label;
 		formBaseUrl = preset.baseUrl;
-		formModel = preset.model;
+		formModel = '';
 		formModels = [];
 		formTestResult = null;
+		modelsFetchedFor = '';
 	}
 
 	function openAddProvider() {
@@ -73,6 +74,9 @@
 		formModels = provider.models;
 		formError = '';
 		formTestResult = null;
+		// Already has a cached model list for this exact config - don't
+		// immediately re-fetch until something actually changes.
+		modelsFetchedFor = draftFingerprint();
 		providerFormOpen = true;
 	}
 
@@ -119,6 +123,30 @@
 			formLoadingModels = false;
 		}
 	}
+
+	/** Identifies the (kind, base URL, key) combination models were last
+	 *  fetched for, so the auto-fetch below only re-runs when one of them
+	 *  actually changes. */
+	function draftFingerprint(): string {
+		return `${formKind} ${formBaseUrl.trim()} ${formApiKey.trim()}`;
+	}
+	let modelsFetchedFor = $state('');
+
+	// Auto-load the model list once the form has enough to ask with (a base
+	// URL, and a key when the provider needs one) - no manual "fetch" step.
+	// Debounced so typing out an API key doesn't fire a request per keystroke.
+	$effect(() => {
+		if (!providerFormOpen) return;
+		const fp = draftFingerprint();
+		if (fp === modelsFetchedFor) return;
+		const ready = formBaseUrl.trim() && (!PROVIDER_PRESETS[formKind].needsKey || formApiKey.trim());
+		if (!ready) return;
+		const timer = setTimeout(() => {
+			modelsFetchedFor = fp;
+			fetchModelsForDraft();
+		}, 500);
+		return () => clearTimeout(timer);
+	});
 
 	async function saveProvider() {
 		if (!formBaseUrl.trim()) {
@@ -386,22 +414,17 @@
 								<label for="provider-model" class="mb-1 block text-xs font-medium text-neutral-600">
 									Model
 								</label>
-								<div class="flex gap-2">
-									<Select
-										id="provider-model"
-										class="flex-1"
-										bind:value={formModel}
-										options={modelOptions}
-									/>
-									<button
-										type="button"
-										onclick={fetchModelsForDraft}
-										disabled={formLoadingModels}
-										class="shrink-0 rounded-lg border border-neutral-200 bg-white px-3 py-2 text-xs font-medium text-neutral-600 transition-colors hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
-									>
-										{formLoadingModels ? 'Loading…' : 'Fetch models'}
-									</button>
-								</div>
+								<Select
+									id="provider-model"
+									class="w-full"
+									bind:value={formModel}
+									options={modelOptions}
+									placeholder={formLoadingModels
+										? 'Loading available models…'
+										: PROVIDER_PRESETS[formKind].needsKey && !formApiKey.trim()
+											? 'Add an API key to load models'
+											: 'Select a model'}
+								/>
 							</div>
 						</div>
 						{#if formError}

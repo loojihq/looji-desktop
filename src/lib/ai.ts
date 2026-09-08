@@ -8,28 +8,22 @@ const ANTHROPIC_VERSION = '2023-06-01';
 // tolerates a cut-off response via its continuation-call loop below.
 const ANTHROPIC_MAX_TOKENS = 8192;
 
-/** Sensible starting point when adding a new provider of a given kind. */
+/**
+ * Sensible starting point when adding a new provider of a given kind.
+ * Deliberately has no default `model` - model lineups change over time, and
+ * a hardcoded guess would go stale. The actual model list is always fetched
+ * live from the provider once enough of the form is filled in.
+ */
 export const PROVIDER_PRESETS: Record<
 	AiProviderKind,
-	{ label: string; baseUrl: string; model: string; needsKey: boolean }
+	{ label: string; baseUrl: string; needsKey: boolean }
 > = {
-	openai: { label: 'OpenAI', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini', needsKey: true },
-	anthropic: {
-		label: 'Anthropic',
-		baseUrl: 'https://api.anthropic.com/v1',
-		model: 'claude-sonnet-5',
-		needsKey: true
-	},
-	ollama: {
-		label: 'Ollama',
-		baseUrl: 'http://localhost:11434/v1',
-		model: 'llama3.1',
-		needsKey: false
-	},
+	openai: { label: 'OpenAI', baseUrl: 'https://api.openai.com/v1', needsKey: true },
+	anthropic: { label: 'Anthropic', baseUrl: 'https://api.anthropic.com/v1', needsKey: true },
+	ollama: { label: 'Ollama', baseUrl: 'http://localhost:11434/v1', needsKey: false },
 	'openai-compatible': {
 		label: 'Custom (OpenAI-compatible)',
 		baseUrl: 'https://api.deepseek.com',
-		model: 'deepseek-chat',
 		needsKey: true
 	}
 };
