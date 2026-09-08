@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Pencil, Plus, Search, Trash2, X } from '@lucide/svelte';
+	import { Pencil, Plus, Search, Trash2 } from '@lucide/svelte';
 	import Avatar from '$lib/components/Avatar.svelte';
 	import Badge from '$lib/components/Badge.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
@@ -28,6 +28,7 @@
 	let newProjectId = $state('');
 	let newAssigneeId = $state('');
 	let newPriority = $state<Priority>('medium');
+	let addError = $state('');
 	let deleteTarget = $state<Task | null>(null);
 
 	let editTarget = $state<Task | null>(null);
@@ -82,7 +83,10 @@
 	}
 
 	$effect(() => {
-		if (!newProjectId && projects[0]) newProjectId = projects[0].id;
+		// Re-picks a valid project whenever the current selection is empty or
+		// points at a project that no longer exists (e.g. it was just deleted).
+		if (newProjectId && projects.some((p) => p.id === newProjectId)) return;
+		newProjectId = projects[0]?.id ?? '';
 	});
 
 	const filtered = $derived(
@@ -94,7 +98,12 @@
 				return new Date(a.due).getTime() - new Date(b.due).getTime();
 			})
 			.filter((task) => {
-				const matchesQuery = task.title.toLowerCase().includes(query.toLowerCase());
+				const q = query.trim().toLowerCase();
+				const matchesQuery =
+					!q ||
+					task.title.toLowerCase().includes(q) ||
+					task.description.toLowerCase().includes(q) ||
+					task.tags.some((tag) => tag.toLowerCase().includes(q));
 				const matchesStatus = statusFilter === 'all' || task.status === statusFilter;
 				const matchesPriority = priorityFilter === 'all' || task.priority === priorityFilter;
 				return matchesQuery && matchesStatus && matchesPriority;
@@ -103,17 +112,22 @@
 
 	const openCount = $derived(tasks.filter((task) => task.status !== 'done').length);
 
-	function handleQuickAdd() {
+	async function handleQuickAdd() {
 		if (!newTitle.trim() || !newProjectId) return;
-		createTask({
-			title: newTitle.trim(),
-			projectId: newProjectId,
-			status: 'backlog',
-			priority: newPriority,
-			assigneeId: newAssigneeId || null,
-			due: daysFromNow(7)
-		});
-		newTitle = '';
+		addError = '';
+		try {
+			await createTask({
+				title: newTitle.trim(),
+				projectId: newProjectId,
+				status: 'backlog',
+				priority: newPriority,
+				assigneeId: newAssigneeId || null,
+				due: daysFromNow(7)
+			});
+			newTitle = '';
+		} catch (err) {
+			addError = err instanceof Error ? err.message : String(err);
+		}
 	}
 
 	async function handleDelete() {
@@ -141,7 +155,10 @@
 <div class="mb-4">
 	{#if editTarget}
 		<form
-			onsubmit={handleEditSave}
+			onsubmit={(event) => {
+				event.preventDefault();
+				handleEditSave();
+			}}
 			autocomplete="off"
 			class="rounded-xl border border-indigo-200 bg-indigo-50/60 p-4 shadow-xs"
 		>
@@ -253,7 +270,14 @@
 			</div>
 		</form>
 	{:else}
-		<form class="flex flex-wrap items-center gap-2" onsubmit={handleQuickAdd} autocomplete="off">
+		<form
+			class="flex flex-wrap items-center gap-2"
+			onsubmit={(event) => {
+				event.preventDefault();
+				handleQuickAdd();
+			}}
+			autocomplete="off"
+		>
 			<div class="relative min-w-64 flex-1">
 				<span
 					class="pointer-events-none absolute inset-y-0 left-3 flex items-center text-neutral-400"
@@ -296,6 +320,9 @@
 				Add task
 			</button>
 		</form>
+		{#if addError}
+			<p class="mt-1.5 text-xs text-red-600">{addError}</p>
+		{/if}
 	{/if}
 </div>
 
@@ -448,7 +475,10 @@
 									type="button"
 									class="rounded-md p-1.5 text-neutral-400 hover:bg-red-50 hover:text-red-600"
 									aria-label="Delete {task.title}"
-									onclick={() => (deleteTarget = task)}
+									onclick={() => {
+										deleteTarget = task;
+										deleteError = '';
+									}}
 								>
 									<Trash2 size={14} />
 								</button>
@@ -471,27 +501,15 @@
 	</div>
 </div>
 
-{#if deleteError}
-	<div
-		class="mb-4 flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700"
-	>
-		<p>{deleteError}</p>
-		<button
-			type="button"
-			class="shrink-0 rounded-md p-1 text-red-400 hover:bg-red-100 hover:text-red-700"
-			aria-label="Dismiss"
-			onclick={() => (deleteError = '')}
-		>
-			<X size={14} />
-		</button>
-	</div>
-{/if}
-
 <ConfirmDialog
 	open={deleteTarget !== null}
 	title="Delete task?"
 	message={`This will permanently delete "${deleteTarget?.title ?? ''}".`}
 	confirmLabel="Delete task"
+	error={deleteError}
 	onConfirm={handleDelete}
-	onCancel={() => (deleteTarget = null)}
+	onCancel={() => {
+		deleteTarget = null;
+		deleteError = '';
+	}}
 />

@@ -6,6 +6,7 @@
 		title,
 		message,
 		confirmLabel = 'Delete',
+		error,
 		onConfirm,
 		onCancel
 	}: {
@@ -13,6 +14,11 @@
 		title: string;
 		message: string;
 		confirmLabel?: string;
+		/** Shown inline in the dialog when a previous confirm attempt failed.
+		 *  The dialog is the topmost element while open, so this is the only
+		 *  reliable place to surface the error - a banner elsewhere on the page
+		 *  would render behind the modal overlay. */
+		error?: string;
 		onConfirm: () => void;
 		onCancel: () => void;
 	} = $props();
@@ -47,6 +53,9 @@
 					<p class="mt-1 text-sm text-neutral-500">{message}</p>
 				</div>
 			</div>
+			{#if error}
+				<p class="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
+			{/if}
 			<div class="mt-5 flex justify-end gap-2">
 				<button
 					type="button"

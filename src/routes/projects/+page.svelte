@@ -133,7 +133,10 @@
 
 {#if formOpen}
 	<form
-		onsubmit={handleSave}
+		onsubmit={(event) => {
+			event.preventDefault();
+			handleSave();
+		}}
 		autocomplete="off"
 		class="mb-6 rounded-xl border border-indigo-200 bg-indigo-50/60 p-4 shadow-xs"
 	>
@@ -292,6 +295,7 @@
 						onclick={(event) => {
 							event.stopPropagation();
 							deleteTarget = project;
+							deleteError = '';
 						}}
 					>
 						<Trash2 size={14} />
@@ -354,27 +358,15 @@
 	{/each}
 </div>
 
-{#if deleteError}
-	<div
-		class="mb-4 flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700"
-	>
-		<p>{deleteError}</p>
-		<button
-			type="button"
-			class="shrink-0 rounded-md p-1 text-red-400 hover:bg-red-100 hover:text-red-700"
-			aria-label="Dismiss"
-			onclick={() => (deleteError = '')}
-		>
-			<X size={14} />
-		</button>
-	</div>
-{/if}
-
 <ConfirmDialog
 	open={deleteTarget !== null}
 	title="Delete project?"
 	message={`This will permanently delete "${deleteTarget?.name ?? ''}" and all of its tasks.`}
 	confirmLabel="Delete project"
+	error={deleteError}
 	onConfirm={handleDelete}
-	onCancel={() => (deleteTarget = null)}
+	onCancel={() => {
+		deleteTarget = null;
+		deleteError = '';
+	}}
 />

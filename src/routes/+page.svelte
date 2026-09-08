@@ -36,6 +36,7 @@
 	let addingTask = $state(false);
 	let quickTitle = $state('');
 	let quickProjectId = $state('');
+	let quickError = $state('');
 
 	$effect(() => {
 		if (!quickProjectId && projects[0]) quickProjectId = projects[0].id;
@@ -94,17 +95,22 @@
 		attentionOverdue.length + attentionDueSoon.length + attentionStale.length
 	);
 
-	function handleQuickAdd() {
+	async function handleQuickAdd() {
 		if (!quickTitle.trim() || !quickProjectId) return;
-		createTask({
-			title: quickTitle.trim(),
-			projectId: quickProjectId,
-			status: 'todo',
-			priority: 'medium',
-			due: daysFromNow(3)
-		});
-		quickTitle = '';
-		addingTask = false;
+		quickError = '';
+		try {
+			await createTask({
+				title: quickTitle.trim(),
+				projectId: quickProjectId,
+				status: 'todo',
+				priority: 'medium',
+				due: daysFromNow(3)
+			});
+			quickTitle = '';
+			addingTask = false;
+		} catch (err) {
+			quickError = err instanceof Error ? err.message : String(err);
+		}
 	}
 </script>
 
@@ -128,28 +134,40 @@
 			Create a project
 		</a>
 	{:else if addingTask}
-		<form class="flex flex-wrap items-center gap-2" onsubmit={handleQuickAdd} autocomplete="off">
-			<input
-				type="text"
+		<div>
+			<form
+				class="flex flex-wrap items-center gap-2"
+				onsubmit={(event) => {
+					event.preventDefault();
+					handleQuickAdd();
+				}}
 				autocomplete="off"
-				placeholder="Task title"
-				class="w-52 rounded-lg border-neutral-300 bg-surface text-sm focus:border-indigo-500 focus:ring-indigo-500"
-				bind:value={quickTitle}
-				required
-			/>
-			<Select
-				class="w-48"
-				bind:value={quickProjectId}
-				ariaLabel="Project"
-				options={projects.map((p) => ({ value: p.id, label: p.name }))}
-			/>
-			<button
-				type="submit"
-				class="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500"
 			>
-				Add
-			</button>
-		</form>
+				<input
+					type="text"
+					autocomplete="off"
+					placeholder="Task title"
+					class="w-52 rounded-lg border-neutral-300 bg-surface text-sm focus:border-indigo-500 focus:ring-indigo-500"
+					bind:value={quickTitle}
+					required
+				/>
+				<Select
+					class="w-48"
+					bind:value={quickProjectId}
+					ariaLabel="Project"
+					options={projects.map((p) => ({ value: p.id, label: p.name }))}
+				/>
+				<button
+					type="submit"
+					class="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500"
+				>
+					Add
+				</button>
+			</form>
+			{#if quickError}
+				<p class="mt-1.5 text-xs text-red-600">{quickError}</p>
+			{/if}
+		</div>
 	{:else}
 		<button
 			type="button"
